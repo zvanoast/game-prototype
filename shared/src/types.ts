@@ -62,3 +62,20 @@ export enum WeaponType {
   Rifle   = "rifle",
   Melee   = "melee",
 }
+
+// --- Weapon Config ---
+
+export interface WeaponConfig {
+  name: string;
+  damage: number;
+  fireRateMs: number;
+  projectileSpeed: number;
+  projectileRange: number;
+  projectileRadius: number;
+  projectileColor: number;
+  meleeDamage: number;
+  meleeArcDegrees: number;
+  meleeRange: number;
+  meleeActiveFrames: number;
+  meleeCooldownMs: number;
+}

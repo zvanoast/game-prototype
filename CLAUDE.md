@@ -1,5 +1,9 @@
 # Battle Royale 2D — Claude Code Project Guide
 
+## Progress
+
+See `claude-progress.md` in the project root for current phase status, completed work, and what's next. Read it at the start of each session and update it after completing phases or milestones.
+
 ## Project Overview
 
 A top-down 2D multiplayer battle royale shooter with retro pixel-art aesthetics and fighting-game-style input combos ("tech"). Browser-based technical prototype.
