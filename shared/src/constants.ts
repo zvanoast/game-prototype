@@ -87,7 +87,7 @@ export const ACTIVE_LOCKERS_MAX = 20;     // maximum lockers active per match
 // --- Match Lifecycle ---
 export const MIN_PLAYERS_TO_START = 2;
 export const COUNTDOWN_DURATION_MS = 5000;
-export const POST_MATCH_DELAY_MS = 5000;
+export const POST_MATCH_DELAY_MS = 10000;
 
 // --- Network ---
 export const SERVER_PORT = 3001;

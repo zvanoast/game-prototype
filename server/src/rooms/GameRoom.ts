@@ -83,8 +83,12 @@ export class GameRoom extends Room<GameStateSchema> {
     console.log(`GameRoom created. Tick rate: ${TICK_RATE}Hz, wallRects: ${this.wallRects.length}, lockers: ${this.state.lockers.length}`);
   }
 
-  onJoin(client: Client) {
+  onJoin(client: Client, options?: { nickname?: string }) {
     const player = new PlayerSchema();
+
+    // Sanitize and set display name
+    const raw = (options?.nickname ?? "").trim().substring(0, 16);
+    player.displayName = raw || `Player ${client.sessionId.substring(0, 4)}`;
 
     // Find a valid spawn position that doesn't overlap walls
     const pos = this.findSafeSpawn();
@@ -145,7 +149,7 @@ export class GameRoom extends Room<GameStateSchema> {
   private tick() {
     const tick = this.state.tick;
     const phase = this.matchSystem.getPhase();
-    const frozen = phase === "ended";
+    const frozen = phase === "waiting" || phase === "countdown" || phase === "ended";
 
     // Process all queued inputs
     for (const { sessionId, input } of this.inputQueue) {

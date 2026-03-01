@@ -3,7 +3,7 @@ import { NetworkManager } from "../network/NetworkManager";
 import { DebugOverlay } from "../ui/DebugOverlay";
 import { Minimap } from "../ui/Minimap";
 import { WeaponHud } from "../ui/WeaponHud";
-import { MatchHud } from "../ui/MatchHud";
+import { MatchHud, ScoreboardEntry } from "../ui/MatchHud";
 import { DamageNumberManager } from "../ui/DamageNumber";
 import { TilemapManager } from "../world/TilemapManager";
 import { CombatManager } from "../systems/CombatManager";
@@ -107,6 +107,7 @@ export class GameScene extends Phaser.Scene {
   private matchPhase: string = "waiting";
   private localEliminated = false;
   private matchWinner: boolean | null = null; // true=won, false=lost, null=draw/unknown
+  private matchWinnerName = "";
   private matchAlivePlayers = 0;
   private matchTotalPlayers = 0;
   private matchCountdownSeconds = 0;
@@ -116,9 +117,11 @@ export class GameScene extends Phaser.Scene {
   private spectateTargetId: string | null = null;
   private spectateLabel: Phaser.GameObjects.Text | null = null;
 
-  // Player names (session prefix)
+  // Player names (from displayName)
   private playerNames = new Map<string, string>();
-  private playerJoinOrder = 0;
+
+  // Nickname passed from MenuScene
+  private nickname = "";
 
   // Button state tracking
   private attackHeld = false;
@@ -153,7 +156,44 @@ export class GameScene extends Phaser.Scene {
     super({ key: "GameScene" });
   }
 
+  init(data: { nickname?: string } = {}) {
+    this.nickname = data.nickname ?? "";
+  }
+
   create() {
+    // Reset all mutable state for clean re-entry (scene instance is reused)
+    this.localPlayer = null;
+    this.localSessionId = null;
+    this.inputSeq = 0;
+    this.pendingInputs = [];
+    this.velocityX = 0;
+    this.velocityY = 0;
+    this.offlineMode = false;
+    this.localHealth = MAX_HEALTH;
+    this.localKills = 0;
+    this.localMeleeWeaponId = WeaponId.Fists as string;
+    this.localRangedWeaponId = "";
+    this.matchPhase = "waiting";
+    this.localEliminated = false;
+    this.matchWinner = null;
+    this.matchWinnerName = "";
+    this.matchAlivePlayers = 0;
+    this.matchTotalPlayers = 0;
+    this.matchCountdownSeconds = 0;
+    this.spectating = false;
+    this.spectateTargetId = null;
+    this.spectateLabel = null;
+    this.attackHeld = false;
+    this.serverProjectileCount = 0;
+    this.playerNames.clear();
+    this.remotePlayers.clear();
+    this.remoteTargets.clear();
+    this.remoteHealthBars.clear();
+    this.serverProjectileSprites.clear();
+    this.lockerSprites.clear();
+    this.pickupSprites.clear();
+    this.dummies = [];
+
     // Create tilemap
     this.tilemapManager = new TilemapManager(this);
 
@@ -244,6 +284,17 @@ export class GameScene extends Phaser.Scene {
     // Connect to server
     this.network = new NetworkManager();
     this.connectToServer();
+
+    // Listen for leave event from MatchHud
+    this.events.on("match:leave", () => {
+      this.network.disconnect();
+      this.scene.start("MenuScene");
+    });
+
+    // Clean up network on scene shutdown (scene.start to another scene)
+    this.events.on("shutdown", () => {
+      this.network.disconnect();
+    });
 
     // Artificial latency keys (1-5)
     this.input.keyboard!.on("keydown-ONE", () => this.network.setArtificialDelay(0));
@@ -336,7 +387,7 @@ export class GameScene extends Phaser.Scene {
 
   private async connectToServer() {
     try {
-      const room = await this.network.connect();
+      const room = await this.network.connect({ nickname: this.nickname });
       this.localSessionId = room.sessionId;
 
       // Enable multiplayer mode on combat manager (disable local damage)
@@ -368,9 +419,9 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.state.players.onAdd((player: any, sessionId: string) => {
-        // Assign display name
-        this.playerJoinOrder++;
-        this.playerNames.set(sessionId, `Player ${this.playerJoinOrder}`);
+        // Use server displayName
+        const name = player.displayName || sessionId.substring(0, 6);
+        this.playerNames.set(sessionId, name);
 
         if (sessionId === room.sessionId) {
           this.spawnLocalPlayer(player.x, player.y);
@@ -411,6 +462,11 @@ export class GameScene extends Phaser.Scene {
         }
 
         player.onChange(() => {
+          // Track displayName updates
+          if (player.displayName) {
+            this.playerNames.set(sessionId, player.displayName);
+          }
+
           if (sessionId === room.sessionId) {
             this.reconcile(player);
             this.localHealth = player.health;
@@ -604,6 +660,7 @@ export class GameScene extends Phaser.Scene {
       room.onMessage("match_start", () => {
         this.matchPhase = "playing";
         this.matchWinner = null;
+        this.matchWinnerName = "";
         this.localEliminated = false;
         this.exitSpectatorMode();
         this.events.emit("sfx:match_start");
@@ -611,6 +668,7 @@ export class GameScene extends Phaser.Scene {
 
       room.onMessage("match_end", (data: any) => {
         this.matchPhase = "ended";
+        this.matchWinnerName = data.winnerName ?? "";
         if (!data.winnerId) {
           this.matchWinner = null;
         } else if (data.winnerId === room.sessionId) {
@@ -723,6 +781,8 @@ export class GameScene extends Phaser.Scene {
 
     // Don't send input or process movement if dead or eliminated
     const isDead = this.localHealth <= 0 || this.localEliminated;
+    // Movement frozen during waiting and ended phases (aim + combat still allowed)
+    const movementFrozen = this.matchPhase === "waiting" || this.matchPhase === "countdown" || this.matchPhase === "ended";
 
     // Spectator mode: cycle with left/right arrow keys
     if (this.spectating) {
@@ -735,27 +795,51 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Send input to server
+    const canMove = !isDead && !movementFrozen;
     if (this.network.getRoom()) {
       this.inputSeq++;
       const input: InputPayload = {
         seq: this.inputSeq,
         tick: 0,
-        dx: isDead ? 0 : dx,
-        dy: isDead ? 0 : dy,
+        dx: canMove ? dx : 0,
+        dy: canMove ? dy : 0,
         aimAngle,
         buttons: isDead ? 0 : buttons,
         dt,
       };
       this.network.sendInput(input);
-      if (!isDead) {
+      if (canMove) {
         this.pendingInputs.push({ seq: this.inputSeq, dx, dy, dt, vx: this.velocityX, vy: this.velocityY });
       }
     } else if (this.offlineMode) {
       this.inputSeq++;
     }
 
-    // Movement & combat
+    // Aim + combat (allowed when alive, even if movement frozen)
     if (this.localPlayer && !isDead) {
+      // Rotate player toward mouse
+      this.localPlayer.setRotation(aimAngle);
+
+      // Combat aim
+      this.combatManager.setAimAngle(aimAngle);
+
+      // Shoot on left click (only if not charging and state allows)
+      if (leftDown && this.stateMachine.canShoot() && !this.stateMachine.isCharging()) {
+        if (this.stateMachine.getChargeFrames() <= 1) {
+          this.combatManager.tryShoot();
+        }
+      }
+
+      // Update charge visual
+      this.combatManager.updateChargeVisual(
+        this.stateMachine.isCharging(),
+        this.stateMachine.getChargeFrames(),
+        CHARGED_SHOT_MIN_FRAMES
+      );
+    }
+
+    // Movement (blocked when dead, eliminated, or phase-frozen)
+    if (this.localPlayer && canMove) {
       if (dashState) {
         // During dash: override movement with dash velocity
         const dashVx = Math.cos(dashState.angle) * dashState.speedPerFrame * 60;
@@ -787,9 +871,6 @@ export class GameScene extends Phaser.Scene {
         this.localPlayer.setAlpha(1);
       }
 
-      // Rotate player toward mouse
-      this.localPlayer.setRotation(aimAngle);
-
       // Animate local player
       if (dashState) {
         this.localPlayer.play("player_walk", true);
@@ -798,25 +879,10 @@ export class GameScene extends Phaser.Scene {
       } else {
         this.localPlayer.play("player_idle", true);
       }
-
-      // Combat aim
-      this.combatManager.setAimAngle(aimAngle);
-
-      // Shoot on left click (only if not charging and state allows)
-      if (leftDown && this.stateMachine.canShoot() && !this.stateMachine.isCharging()) {
-        // Only fire on the frame the button goes down (not held)
-        // Normal shots fire on press; charging is handled by combo system
-        if (this.stateMachine.getChargeFrames() <= 1) {
-          this.combatManager.tryShoot();
-        }
-      }
-
-      // Update charge visual
-      this.combatManager.updateChargeVisual(
-        this.stateMachine.isCharging(),
-        this.stateMachine.getChargeFrames(),
-        CHARGED_SHOT_MIN_FRAMES
-      );
+    } else if (this.localPlayer && !isDead && movementFrozen) {
+      // Frozen but alive — show idle animation
+      this.localPlayer.play("player_idle", true);
+      this.localPlayer.setAlpha(1);
     }
 
     // Interpolate remote players + update health bars + rotation + death
@@ -900,7 +966,10 @@ export class GameScene extends Phaser.Scene {
       this.localEliminated,
       this.matchWinner,
       this.matchCountdownSeconds,
-      delta
+      delta,
+      this.matchWinnerName,
+      this.matchPhase === "ended" ? this.getScoreboardEntries() : undefined,
+      this.localSessionId ?? undefined
     );
 
     // Flush artificial latency queue
@@ -952,6 +1021,25 @@ export class GameScene extends Phaser.Scene {
     const key = `pickup_${weaponId}`;
     if (this.textures.exists(key)) return key;
     return "pickup";
+  }
+
+  /** Build scoreboard entries from current room state */
+  private getScoreboardEntries(): ScoreboardEntry[] {
+    const room = this.network.getRoom();
+    if (!room) return [];
+    const entries: ScoreboardEntry[] = [];
+    const state = room.state as any;
+    if (state?.players) {
+      state.players.forEach((player: any, sessionId: string) => {
+        entries.push({
+          sessionId,
+          displayName: this.playerNames.get(sessionId) ?? sessionId.substring(0, 6),
+          kills: player.kills ?? 0,
+          eliminated: player.eliminated ?? false,
+        });
+      });
+    }
+    return entries;
   }
 
   /** Get locker data for minimap rendering */

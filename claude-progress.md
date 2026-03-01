@@ -250,3 +250,28 @@
 - `client/src/audio/ProceduralAudio.ts` — CREATE: 13 procedurally generated sounds via Web Audio API oscillators/noise (shoot, melee_swing, melee_hit, charged_shot, dash, dash_strike, impact, death, damage, pickup, locker_open, countdown_beep, match_start)
 - `client/src/systems/SoundManager.ts` — REWRITE: real audio playback via `AudioContext.createBufferSource()` + `GainNode`; browser autoplay policy handling; 13 sound events wired
 - `client/src/scenes/GameScene.ts` — new sound event emissions: `sfx:pickup`, `sfx:locker_open`, `sfx:countdown_beep`, `sfx:match_start`
+
+## Phase 8: Lobby & UI Flow — COMPLETE
+
+### Menu Scene
+- `client/src/scenes/MenuScene.ts` — CREATE: "STORAGE WARS" title, DOM `<input>` for nickname (max 16 chars, pre-filled from localStorage), "PLAY" button with hover/press feedback, "HOW TO PLAY" toggle panel (WASD, LMB/RMB, E, dash, charge), Enter key to submit, DOM cleanup on shutdown
+
+### Scene Flow
+- BootScene → MenuScene → GameScene → (leave) → MenuScene
+- `client/src/main.ts` — added `dom: { createContainer: true }`, imported MenuScene, added to scene list
+- `client/src/scenes/BootScene.ts` — routes to "MenuScene" instead of "GameScene"
+
+### Server-Side Display Names
+- `server/src/state/GameState.ts` — `PlayerSchema.displayName` (string) added
+- `server/src/rooms/GameRoom.ts` — `onJoin(client, options?)` reads nickname from options, sanitizes (trim, 16 char max), sets `player.displayName`; fallback to sessionId prefix
+- `server/src/systems/MatchSystem.ts` — `checkWinCondition()` uses `player.displayName` for `winnerName`
+
+### Network & Client Flow
+- `client/src/network/NetworkManager.ts` — `connect(options)` passes options to `joinOrCreate("game", options)`
+- `client/src/scenes/GameScene.ts` — `init(data)` receives `{ nickname }` from MenuScene; passes to `network.connect()`; uses `player.displayName` for player names (synced on add + onChange); stores `matchWinnerName` from `match_end` message; `getScoreboardEntries()` helper builds entries from room state; `match:leave` event listener disconnects + returns to MenuScene
+
+### Match HUD Upgrades
+- `client/src/ui/MatchHud.ts` — scoreboard panel (semi-transparent bg, "SCOREBOARD" title, up to 10 rows sorted by kills desc, winner row gold, local player green); "LEAVE MATCH" button emitting `match:leave`; defeat text shows winner name; `ScoreboardEntry` interface exported; `update()` signature extended with `winnerName`, `scoreboard`, `localSessionId`
+
+### Shared Constants
+- `shared/src/constants.ts` — `POST_MATCH_DELAY_MS`: 5000 → 10000 (more time to view scoreboard)

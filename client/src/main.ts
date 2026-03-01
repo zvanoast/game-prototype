@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { BootScene } from "./scenes/BootScene";
+import { MenuScene } from "./scenes/MenuScene";
 import { GameScene } from "./scenes/GameScene";
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -11,6 +12,9 @@ const config: Phaser.Types.Core.GameConfig = {
   roundPixels: true,
   antialias: false,
   backgroundColor: "#1a1a2e",
+  dom: {
+    createContainer: true,
+  },
   physics: {
     default: "arcade",
     arcade: {
@@ -22,7 +26,7 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, GameScene],
+  scene: [BootScene, MenuScene, GameScene],
 };
 
 new Phaser.Game(config);

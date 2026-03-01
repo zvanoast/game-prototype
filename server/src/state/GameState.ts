@@ -24,6 +24,7 @@ export class PlayerSchema extends Schema {
   @type("string") meleeWeaponId: string = "fists";
   @type("string") rangedWeaponId: string = "";
   @type("boolean") eliminated: boolean = false;
+  @type("string") displayName: string = "";
 }
 
 export class LockerSchema extends Schema {

@@ -43,7 +43,7 @@ export class MatchSystem {
   }
 
   canAttack(): boolean {
-    return this.phase === "playing";
+    return this.phase === "waiting" || this.phase === "playing";
   }
 
   /** Called each server tick */
@@ -182,8 +182,7 @@ export class MatchSystem {
       this.state.players.forEach((player: PlayerSchema, sessionId: string) => {
         if (!player.eliminated && player.state !== "dead") {
           winnerId = sessionId;
-          // Use short session ID prefix as display name
-          winnerName = sessionId.substring(0, 6);
+          winnerName = player.displayName || sessionId.substring(0, 6);
         }
       });
     }

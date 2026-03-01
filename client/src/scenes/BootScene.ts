@@ -18,7 +18,7 @@ export class BootScene extends Phaser.Scene {
     this.registerAnimations();
 
     console.log("BootScene: all assets generated");
-    this.scene.start("GameScene");
+    this.scene.start("MenuScene");
   }
 
   // ─── Tileset (6 tiles) ──────────────────────────────────────────────

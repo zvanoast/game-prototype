@@ -5,6 +5,13 @@ interface KillFeedEntry {
   timer: number; // ms remaining
 }
 
+export interface ScoreboardEntry {
+  sessionId: string;
+  displayName: string;
+  kills: number;
+  eliminated: boolean;
+}
+
 const KILL_FEED_MAX = 5;
 const KILL_FEED_DURATION_MS = 5000;
 
@@ -30,11 +37,21 @@ export class MatchHud {
   private killFeedEntries: KillFeedEntry[] = [];
   private killFeedContainer: Phaser.GameObjects.Container;
 
+  // Scoreboard
+  private scoreboardContainer: Phaser.GameObjects.Container;
+  private scoreboardRows: Phaser.GameObjects.Text[] = [];
+  private scoreboardTitle!: Phaser.GameObjects.Text;
+  private scoreboardBg!: Phaser.GameObjects.Rectangle;
+
+  // Leave button
+  private leaveButton: Phaser.GameObjects.Text;
+
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
 
     const centerX = scene.cameras.main.width / 2;
     const centerY = scene.cameras.main.height / 2;
+    const camW = scene.cameras.main.width;
 
     // Phase banner — top center
     this.phaseBanner = scene.add.text(centerX, 20, "", {
@@ -88,11 +105,12 @@ export class MatchHud {
     this.eliminatedText.setVisible(false);
 
     // Victory/Defeat overlay
-    this.resultText = scene.add.text(centerX, centerY, "", {
+    this.resultText = scene.add.text(centerX, centerY - 80, "", {
       fontSize: "48px",
       fontFamily: "monospace",
       color: "#ffffff",
       fontStyle: "bold",
+      align: "center",
     });
     this.resultText.setOrigin(0.5, 0.5);
     this.resultText.setScrollFactor(0);
@@ -100,9 +118,53 @@ export class MatchHud {
     this.resultText.setVisible(false);
 
     // Kill feed container (top-right)
-    this.killFeedContainer = scene.add.container(scene.cameras.main.width - 10, 10);
+    this.killFeedContainer = scene.add.container(camW - 10, 10);
     this.killFeedContainer.setScrollFactor(0);
     this.killFeedContainer.setDepth(900);
+
+    // Scoreboard container (centered, below result text)
+    this.scoreboardContainer = scene.add.container(centerX, centerY + 10);
+    this.scoreboardContainer.setScrollFactor(0);
+    this.scoreboardContainer.setDepth(955);
+    this.scoreboardContainer.setVisible(false);
+
+    // Scoreboard bg (will be resized in buildScoreboard)
+    this.scoreboardBg = scene.add.rectangle(0, 0, 320, 40, 0x000000, 0.85);
+    this.scoreboardBg.setStrokeStyle(1, 0x555577);
+    this.scoreboardContainer.add(this.scoreboardBg);
+
+    // Scoreboard title
+    this.scoreboardTitle = scene.add.text(0, -10, "SCOREBOARD", {
+      fontSize: "14px",
+      fontFamily: "monospace",
+      color: "#ffcc00",
+      fontStyle: "bold",
+    });
+    this.scoreboardTitle.setOrigin(0.5, 0.5);
+    this.scoreboardContainer.add(this.scoreboardTitle);
+
+    // Leave button (below scoreboard)
+    this.leaveButton = scene.add.text(centerX, scene.cameras.main.height - 50, "LEAVE MATCH", {
+      fontSize: "16px",
+      fontFamily: "monospace",
+      color: "#ff6666",
+      backgroundColor: "#000000cc",
+      padding: { x: 16, y: 8 },
+    });
+    this.leaveButton.setOrigin(0.5, 0.5);
+    this.leaveButton.setScrollFactor(0);
+    this.leaveButton.setDepth(960);
+    this.leaveButton.setVisible(false);
+    this.leaveButton.setInteractive({ useHandCursor: true });
+    this.leaveButton.on("pointerover", () => {
+      this.leaveButton.setStyle({ color: "#ffffff", backgroundColor: "#cc0000cc" });
+    });
+    this.leaveButton.on("pointerout", () => {
+      this.leaveButton.setStyle({ color: "#ff6666", backgroundColor: "#000000cc" });
+    });
+    this.leaveButton.on("pointerup", () => {
+      scene.events.emit("match:leave");
+    });
   }
 
   update(
@@ -112,7 +174,10 @@ export class MatchHud {
     isEliminated: boolean,
     isWinner: boolean | null,
     countdownSeconds: number,
-    delta: number
+    delta: number,
+    winnerName?: string,
+    scoreboard?: ScoreboardEntry[],
+    localSessionId?: string
   ) {
     // Phase banner
     switch (phase) {
@@ -123,6 +188,8 @@ export class MatchHud {
         this.countdownText.setVisible(false);
         this.eliminatedText.setVisible(false);
         this.resultText.setVisible(false);
+        this.scoreboardContainer.setVisible(false);
+        this.leaveButton.setVisible(false);
         break;
 
       case "countdown":
@@ -131,6 +198,8 @@ export class MatchHud {
         this.aliveText.setVisible(false);
         this.eliminatedText.setVisible(false);
         this.resultText.setVisible(false);
+        this.scoreboardContainer.setVisible(false);
+        this.leaveButton.setVisible(false);
 
         if (countdownSeconds > 0) {
           this.countdownText.setText(`${countdownSeconds}`);
@@ -152,6 +221,8 @@ export class MatchHud {
         this.eliminatedText.setVisible(isEliminated);
 
         this.resultText.setVisible(false);
+        this.scoreboardContainer.setVisible(false);
+        this.leaveButton.setVisible(false);
         break;
 
       case "ended":
@@ -166,15 +237,24 @@ export class MatchHud {
           this.resultText.setStyle({ color: "#ffcc00" });
           this.resultText.setVisible(true);
         } else if (isWinner === false) {
-          this.resultText.setText("DEFEAT");
-          this.resultText.setStyle({ color: "#ff4444" });
+          const defeatMsg = winnerName ? `DEFEAT\n${winnerName} wins` : "DEFEAT";
+          this.resultText.setText(defeatMsg);
+          this.resultText.setStyle({ color: "#ff4444", fontSize: "36px" });
           this.resultText.setVisible(true);
         } else {
-          // Draw
           this.resultText.setText("DRAW");
           this.resultText.setStyle({ color: "#aaaaaa" });
           this.resultText.setVisible(true);
         }
+
+        // Show scoreboard
+        if (scoreboard && scoreboard.length > 0) {
+          this.buildScoreboard(scoreboard, localSessionId);
+          this.scoreboardContainer.setVisible(true);
+        }
+
+        // Show leave button
+        this.leaveButton.setVisible(true);
         break;
     }
 
@@ -213,6 +293,60 @@ export class MatchHud {
     this.countdownText.setVisible(false);
     this.eliminatedText.setVisible(false);
     this.resultText.setVisible(false);
+    this.scoreboardContainer.setVisible(false);
+    this.leaveButton.setVisible(false);
+  }
+
+  private buildScoreboard(entries: ScoreboardEntry[], localSessionId?: string) {
+    // Clear old rows
+    for (const row of this.scoreboardRows) {
+      row.destroy();
+    }
+    this.scoreboardRows = [];
+
+    // Sort by kills desc
+    const sorted = [...entries].sort((a, b) => b.kills - a.kills);
+
+    const rowHeight = 22;
+    const maxRows = Math.min(sorted.length, 10);
+    const panelHeight = 40 + maxRows * rowHeight;
+
+    // Reposition title and bg
+    this.scoreboardBg.setSize(320, panelHeight);
+    this.scoreboardBg.setPosition(0, panelHeight / 2 - 10);
+    this.scoreboardTitle.setPosition(0, 0);
+
+    for (let i = 0; i < maxRows; i++) {
+      const entry = sorted[i];
+      const isLocal = entry.sessionId === localSessionId;
+      const isWinner = i === 0 && entry.kills > 0;
+
+      let color = "#cccccc";
+      if (isWinner) color = "#ffcc00";
+      if (isLocal) color = "#00ff88";
+
+      const status = entry.eliminated ? " (dead)" : "";
+      const label = `${i + 1}. ${entry.displayName}${status}`;
+      const killsStr = `${entry.kills} kill${entry.kills !== 1 ? "s" : ""}`;
+
+      const rowText = this.scene.add.text(-140, 18 + i * rowHeight, label, {
+        fontSize: "13px",
+        fontFamily: "monospace",
+        color,
+      });
+      rowText.setOrigin(0, 0);
+
+      const killsText = this.scene.add.text(140, 18 + i * rowHeight, killsStr, {
+        fontSize: "13px",
+        fontFamily: "monospace",
+        color,
+      });
+      killsText.setOrigin(1, 0);
+
+      this.scoreboardContainer.add(rowText);
+      this.scoreboardContainer.add(killsText);
+      this.scoreboardRows.push(rowText, killsText);
+    }
   }
 
   private tickKillFeed(delta: number) {

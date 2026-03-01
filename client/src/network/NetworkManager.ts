@@ -20,9 +20,9 @@ export class NetworkManager {
     this.client = new Client("ws://localhost:3001");
   }
 
-  async connect(): Promise<Room> {
+  async connect(options: Record<string, unknown> = {}): Promise<Room> {
     try {
-      this.room = await this.client.joinOrCreate("game");
+      this.room = await this.client.joinOrCreate("game", options);
       console.log(`Connected to room: ${this.room.id}, sessionId: ${this.room.sessionId}`);
 
       if (this._onStateChange) {
