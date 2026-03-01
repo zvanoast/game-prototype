@@ -5,11 +5,14 @@ import {
   PICKUP_RADIUS,
   PLAYER_RADIUS,
   TICK_RATE,
+  ACTIVE_LOCKERS_MIN,
+  ACTIVE_LOCKERS_MAX,
 } from "shared";
 import { WeaponId } from "shared";
 import type { WeaponConfig } from "shared";
 import {
-  LOCKER_SPAWNS,
+  LOCKER_SLOTS,
+  pickActiveLockers,
   LOOTABLE_WEAPON_IDS,
   getWeaponConfig,
   WEAPON_FISTS,
@@ -38,16 +41,16 @@ export class LootSystem {
     this.state = state;
   }
 
-  /** Populate lockers from LOCKER_SPAWNS with random weapons */
+  /** Populate lockers from a random subset of LOCKER_SLOTS */
   initLockers() {
-    for (let i = 0; i < LOCKER_SPAWNS.length; i++) {
-      const spawn = LOCKER_SPAWNS[i];
+    const activeSlots = pickActiveLockers(LOCKER_SLOTS, ACTIVE_LOCKERS_MIN, ACTIVE_LOCKERS_MAX);
+    for (let i = 0; i < activeSlots.length; i++) {
+      const slot = activeSlots[i];
       const locker = new LockerSchema();
       locker.id = i;
-      locker.x = spawn.x;
-      locker.y = spawn.y;
+      locker.x = slot.x;
+      locker.y = slot.y;
       locker.opened = false;
-      // Random weapon from lootable pool
       locker.containedWeaponId = LOOTABLE_WEAPON_IDS[
         Math.floor(Math.random() * LOOTABLE_WEAPON_IDS.length)
       ];
@@ -271,7 +274,7 @@ export class LootSystem {
     }
   }
 
-  /** Reset all loot for a new match: re-close lockers, clear pickups */
+  /** Reset all loot for a new match: clear pickups, re-pick random locker subset */
   resetForNewMatch() {
     // Clear all pickups
     while (this.state.pickups.length > 0) {
@@ -280,14 +283,10 @@ export class LootSystem {
     this.pickupSpawnTick.clear();
     this.nextPickupId = 1;
 
-    // Re-close all lockers with new random weapons
-    for (let i = 0; i < this.state.lockers.length; i++) {
-      const locker = this.state.lockers.at(i);
-      if (!locker) continue;
-      locker.opened = false;
-      locker.containedWeaponId = LOOTABLE_WEAPON_IDS[
-        Math.floor(Math.random() * LOOTABLE_WEAPON_IDS.length)
-      ];
+    // Clear old lockers and re-pick a new random subset
+    while (this.state.lockers.length > 0) {
+      this.state.lockers.pop();
     }
+    this.initLockers();
   }
 }

@@ -81,6 +81,8 @@ export const MAX_SERVER_PROJECTILES = 100;
 // --- Loot / Lockers ---
 export const LOCKER_INTERACT_RANGE = 48;  // pixels from player center
 export const PICKUP_RADIUS = 12;          // circle-vs-circle pickup range
+export const ACTIVE_LOCKERS_MIN = 15;     // minimum lockers active per match
+export const ACTIVE_LOCKERS_MAX = 20;     // maximum lockers active per match
 
 // --- Match Lifecycle ---
 export const MIN_PLAYERS_TO_START = 2;

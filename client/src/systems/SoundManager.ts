@@ -1,72 +1,94 @@
 import Phaser from "phaser";
+import { ProceduralAudio } from "../audio/ProceduralAudio";
 
 /**
- * Placeholder sound manager. Logs all sound events to console.
- * Wire actual audio files in Phase 6.
+ * Sound manager using Web Audio API with procedurally generated sounds.
+ * Handles browser autoplay policy by resuming AudioContext on first user input.
  */
 export class SoundManager {
   private scene: Phaser.Scene;
+  private audioCtx: AudioContext;
+  private buffers = new Map<string, AudioBuffer>();
+  private resumed = false;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
 
-    // Listen for combat events
-    scene.events.on("sfx:shoot", this.playShoot, this);
-    scene.events.on("sfx:melee_hit", this.playMeleeHit, this);
-    scene.events.on("sfx:melee_swing", this.playMeleeSwing, this);
-    scene.events.on("sfx:charged_shot", this.playChargedShot, this);
-    scene.events.on("sfx:dash", this.playDash, this);
-    scene.events.on("sfx:dash_strike", this.playDashStrike, this);
-    scene.events.on("sfx:impact", this.playImpact, this);
-    scene.events.on("sfx:death", this.playDeath, this);
-    scene.events.on("sfx:damage", this.playDamage, this);
+    // Create AudioContext
+    this.audioCtx = new AudioContext();
+
+    // Generate all sound buffers
+    const gen = new ProceduralAudio(this.audioCtx);
+    this.buffers.set("shoot", gen.generateShoot());
+    this.buffers.set("melee_swing", gen.generateMeleeSwing());
+    this.buffers.set("melee_hit", gen.generateMeleeHit());
+    this.buffers.set("charged_shot", gen.generateChargedShot());
+    this.buffers.set("dash", gen.generateDash());
+    this.buffers.set("dash_strike", gen.generateDashStrike());
+    this.buffers.set("impact", gen.generateImpact());
+    this.buffers.set("death", gen.generateDeath());
+    this.buffers.set("damage", gen.generateDamage());
+    this.buffers.set("pickup", gen.generatePickup());
+    this.buffers.set("locker_open", gen.generateLockerOpen());
+    this.buffers.set("countdown_beep", gen.generateCountdownBeep());
+    this.buffers.set("match_start", gen.generateMatchStart());
+
+    // Handle browser autoplay policy
+    const resumeAudio = () => {
+      if (!this.resumed && this.audioCtx.state === "suspended") {
+        this.audioCtx.resume();
+        this.resumed = true;
+      }
+    };
+    scene.input.on("pointerdown", resumeAudio);
+    scene.input.keyboard?.on("keydown", resumeAudio);
+
+    // Wire up scene events
+    scene.events.on("sfx:shoot", () => this.play("shoot", 0.4), this);
+    scene.events.on("sfx:melee_hit", () => this.play("melee_hit", 0.5), this);
+    scene.events.on("sfx:melee_swing", () => this.play("melee_swing", 0.3), this);
+    scene.events.on("sfx:charged_shot", () => this.play("charged_shot", 0.5), this);
+    scene.events.on("sfx:dash", () => this.play("dash", 0.3), this);
+    scene.events.on("sfx:dash_strike", () => this.play("dash_strike", 0.4), this);
+    scene.events.on("sfx:impact", () => this.play("impact", 0.3), this);
+    scene.events.on("sfx:death", () => this.play("death", 0.5), this);
+    scene.events.on("sfx:damage", () => this.play("damage", 0.3), this);
+    scene.events.on("sfx:pickup", () => this.play("pickup", 0.4), this);
+    scene.events.on("sfx:locker_open", () => this.play("locker_open", 0.4), this);
+    scene.events.on("sfx:countdown_beep", () => this.play("countdown_beep", 0.4), this);
+    scene.events.on("sfx:match_start", () => this.play("match_start", 0.5), this);
 
     scene.events.once("shutdown", () => {
-      scene.events.off("sfx:shoot", this.playShoot, this);
-      scene.events.off("sfx:melee_hit", this.playMeleeHit, this);
-      scene.events.off("sfx:melee_swing", this.playMeleeSwing, this);
-      scene.events.off("sfx:charged_shot", this.playChargedShot, this);
-      scene.events.off("sfx:dash", this.playDash, this);
-      scene.events.off("sfx:dash_strike", this.playDashStrike, this);
-      scene.events.off("sfx:impact", this.playImpact, this);
-      scene.events.off("sfx:death", this.playDeath, this);
-      scene.events.off("sfx:damage", this.playDamage, this);
+      scene.events.off("sfx:shoot", undefined, this);
+      scene.events.off("sfx:melee_hit", undefined, this);
+      scene.events.off("sfx:melee_swing", undefined, this);
+      scene.events.off("sfx:charged_shot", undefined, this);
+      scene.events.off("sfx:dash", undefined, this);
+      scene.events.off("sfx:dash_strike", undefined, this);
+      scene.events.off("sfx:impact", undefined, this);
+      scene.events.off("sfx:death", undefined, this);
+      scene.events.off("sfx:damage", undefined, this);
+      scene.events.off("sfx:pickup", undefined, this);
+      scene.events.off("sfx:locker_open", undefined, this);
+      scene.events.off("sfx:countdown_beep", undefined, this);
+      scene.events.off("sfx:match_start", undefined, this);
+      this.audioCtx.close();
     });
   }
 
-  private playShoot() {
-    console.log("SFX: shoot");
-  }
+  private play(key: string, volume = 1) {
+    const buffer = this.buffers.get(key);
+    if (!buffer) return;
+    if (this.audioCtx.state === "suspended") return;
 
-  private playMeleeHit() {
-    console.log("SFX: melee_hit");
-  }
+    const source = this.audioCtx.createBufferSource();
+    source.buffer = buffer;
 
-  private playMeleeSwing() {
-    console.log("SFX: melee_swing");
-  }
+    const gain = this.audioCtx.createGain();
+    gain.gain.value = volume;
 
-  private playChargedShot() {
-    console.log("SFX: charged_shot");
-  }
-
-  private playDash() {
-    console.log("SFX: dash");
-  }
-
-  private playDashStrike() {
-    console.log("SFX: dash_strike");
-  }
-
-  private playImpact() {
-    console.log("SFX: impact");
-  }
-
-  private playDeath() {
-    console.log("SFX: death");
-  }
-
-  private playDamage() {
-    console.log("SFX: damage");
+    source.connect(gain);
+    gain.connect(this.audioCtx.destination);
+    source.start();
   }
 }

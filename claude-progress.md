@@ -226,3 +226,27 @@
 
 ### Debug Overlay
 - Added: match phase, alive count, eliminated status (expanded to 22 rows)
+
+## Phase 7: Map & Visual Polish — COMPLETE
+
+### 7A: Warehouse Map Redesign + Locker Randomization
+- `shared/src/map-data.ts` — symmetrical storage warehouse layout: 4 columns of 4×6 storage units (left/right mirrored) + 6 center cover obstacles, `MapTheme` interface, `WAREHOUSE_THEME` constant
+- `shared/src/locker-data.ts` — 30 `LockerSlot` positions adjacent to storage units, `pickActiveLockers()` Fisher-Yates shuffle helper, `LOCKER_SPAWNS` alias for backward compat
+- `shared/src/constants.ts` — `ACTIVE_LOCKERS_MIN = 15`, `ACTIVE_LOCKERS_MAX = 20`
+- `server/src/systems/LootSystem.ts` — `initLockers()` uses `pickActiveLockers()` for random subset; `resetForNewMatch()` clears and re-picks lockers
+
+### 7B: Upgraded Sprites & Tilemap
+- `client/src/scenes/BootScene.ts` — expanded tileset (6 tiles: floor, wall, wall-top, floor-accent, wall-edge-h, wall-edge-v); per-weapon projectile textures (`proj_darts`, `proj_plates`, `proj_staple_gun`, `proj_default`, `proj_charged`); improved locker sprites (metal gray with padlock); per-weapon pickup silhouettes (`pickup_hammer`, `pickup_lamp`, `pickup_frying_pan`, `pickup_darts`, `pickup_plates`, `pickup_staple_gun`); target mannequin dummy sprite
+- `client/src/world/TilemapManager.ts` — wall-top tiles for south-facing walls (depth effect), ~10% floor accent scatter with seeded PRNG, collision on all wall tile indices
+- `server/src/state/GameState.ts` — `ProjectileSchema.weaponId` field added
+- `server/src/systems/CombatSystem.ts` — `weaponId` set on `ServerProjectile` and synced to schema
+- `client/src/scenes/GameScene.ts` — per-weapon projectile textures via `getProjectileTexture()`, per-weapon pickup textures via `getPickupTexture()`
+
+### 7C: Player Animations
+- `client/src/scenes/BootScene.ts` — 11-frame player spritesheet (idle×2, walk×4, attack×2, death×3) via raw HTML Canvas; 4 registered animations (`player_idle` 2fps, `player_walk` 8fps, `player_attack` 12fps, `player_death` 6fps)
+- `client/src/scenes/GameScene.ts` — local player uses `player_sheet` texture tinted green with animations based on movement state; remote players use `player_sheet` tinted red with state-driven animations; death animation on kill
+
+### 7D: Sound Effects
+- `client/src/audio/ProceduralAudio.ts` — CREATE: 13 procedurally generated sounds via Web Audio API oscillators/noise (shoot, melee_swing, melee_hit, charged_shot, dash, dash_strike, impact, death, damage, pickup, locker_open, countdown_beep, match_start)
+- `client/src/systems/SoundManager.ts` — REWRITE: real audio playback via `AudioContext.createBufferSource()` + `GainNode`; browser autoplay policy handling; 13 sound events wired
+- `client/src/scenes/GameScene.ts` — new sound event emissions: `sfx:pickup`, `sfx:locker_open`, `sfx:countdown_beep`, `sfx:match_start`

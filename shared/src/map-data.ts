@@ -20,32 +20,93 @@ export interface WallRect {
   h: number;
 }
 
-/** 18 interior obstacles (tile coordinates) */
-export const OBSTACLES: Obstacle[] = [
-  // Top-left quadrant
-  { x: 8, y: 8, w: 3, h: 1 },
-  { x: 5, y: 14, w: 1, h: 4 },
-  { x: 12, y: 5, w: 2, h: 2 },
-  { x: 15, y: 12, w: 4, h: 1 },
-  // Top-right quadrant
-  { x: 40, y: 6, w: 2, h: 3 },
-  { x: 50, y: 10, w: 3, h: 1 },
-  { x: 55, y: 5, w: 1, h: 5 },
-  { x: 45, y: 15, w: 5, h: 1 },
-  // Bottom-left quadrant
-  { x: 6, y: 45, w: 4, h: 1 },
-  { x: 10, y: 50, w: 1, h: 3 },
-  { x: 15, y: 48, w: 2, h: 2 },
-  { x: 20, y: 55, w: 3, h: 1 },
-  // Bottom-right quadrant
-  { x: 48, y: 48, w: 2, h: 2 },
-  { x: 42, y: 52, w: 1, h: 4 },
-  { x: 55, y: 45, w: 3, h: 1 },
-  { x: 50, y: 55, w: 4, h: 1 },
-  // Center area
-  { x: 30, y: 30, w: 4, h: 4 },
-  { x: 28, y: 25, w: 1, h: 3 },
-];
+/** Color theme for warehouse tileset */
+export interface MapTheme {
+  floorColor: number;
+  floorAccentColor: number;
+  wallColor: number;
+  wallHighlight: number;
+  wallShadow: number;
+}
+
+export const WAREHOUSE_THEME: MapTheme = {
+  floorColor: 0x2a2a3e,      // dark concrete
+  floorAccentColor: 0x333348, // slightly lighter concrete
+  wallColor: 0x667788,        // storage unit walls
+  wallHighlight: 0x889aab,    // top edge
+  wallShadow: 0x445566,       // bottom edge
+};
+
+/**
+ * Symmetrical storage warehouse layout on a 64×64 tile grid.
+ *
+ * Layout (approximate):
+ *   - Perimeter walls handled separately (row/col 0 and 63)
+ *   - 4 columns of storage units, symmetrical left/right of center aisle
+ *   - Center aisle at x=30..33 (clear vertical lane)
+ *   - Horizontal aisles between unit rows for combat
+ *   - Open spawn zones at top (rows 2-4) and bottom (rows 59-61)
+ *
+ * Left half columns at x=4..7 and x=12..15
+ * Right half mirrored at x=48..51 and x=56..59
+ * (mirror formula: mirrorX = 63 - x - w)
+ */
+function buildSymmetricObstacles(): Obstacle[] {
+  const obstacles: Obstacle[] = [];
+
+  // Define left-half storage units (will be mirrored for right half)
+  // Each unit is a 4-wide × 6-tall block
+  const leftUnits: Obstacle[] = [
+    // Column 1 (x=4..7)
+    { x: 4, y: 6, w: 4, h: 6 },
+    { x: 4, y: 16, w: 4, h: 6 },
+    { x: 4, y: 26, w: 4, h: 6 },
+    { x: 4, y: 36, w: 4, h: 6 },
+    { x: 4, y: 46, w: 4, h: 6 },
+
+    // Column 2 (x=12..15)
+    { x: 12, y: 6, w: 4, h: 6 },
+    { x: 12, y: 16, w: 4, h: 6 },
+    { x: 12, y: 26, w: 4, h: 6 },
+    { x: 12, y: 36, w: 4, h: 6 },
+    { x: 12, y: 46, w: 4, h: 6 },
+  ];
+
+  // Add center obstacles (small crates near the center aisle for cover)
+  const centerObstacles: Obstacle[] = [
+    { x: 22, y: 10, w: 3, h: 3 },
+    { x: 22, y: 30, w: 3, h: 3 },
+    { x: 22, y: 50, w: 3, h: 3 },
+    { x: 39, y: 10, w: 3, h: 3 },
+    { x: 39, y: 30, w: 3, h: 3 },
+    { x: 39, y: 50, w: 3, h: 3 },
+  ];
+
+  // Add left-half units
+  for (const unit of leftUnits) {
+    obstacles.push(unit);
+  }
+
+  // Mirror left-half to right-half
+  for (const unit of leftUnits) {
+    obstacles.push({
+      x: MAP_WIDTH_TILES - 1 - unit.x - unit.w + 1,
+      y: unit.y,
+      w: unit.w,
+      h: unit.h,
+    });
+  }
+
+  // Add center obstacles (already placed symmetrically)
+  for (const obs of centerObstacles) {
+    obstacles.push(obs);
+  }
+
+  return obstacles;
+}
+
+/** Interior obstacles — symmetrical storage warehouse layout */
+export const OBSTACLES: Obstacle[] = buildSymmetricObstacles();
 
 /**
  * Convert tile-coordinate obstacles + perimeter walls into pixel-coordinate AABBs.

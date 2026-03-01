@@ -37,6 +37,7 @@ interface ServerProjectile {
   originX: number;
   originY: number;
   maxRange: number;
+  weaponId: string;
 }
 
 export class CombatSystem {
@@ -186,6 +187,7 @@ export class CombatSystem {
       originX: sx,
       originY: sy,
       maxRange,
+      weaponId: rangedConfig.id,
     };
 
     this.projectiles.push(proj);
@@ -432,6 +434,7 @@ export class CombatSystem {
     schema.speed = proj.speed;
     schema.ownerId = proj.ownerId;
     schema.charged = proj.charged;
+    schema.weaponId = proj.weaponId;
     this.state.projectiles.push(schema);
   }
 

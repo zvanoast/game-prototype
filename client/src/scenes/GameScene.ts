@@ -233,6 +233,11 @@ export class GameScene extends Phaser.Scene {
     this.spectateLabel.setDepth(100);
     this.spectateLabel.setVisible(false);
 
+    // Block browser context menu on game canvas (must be set before any right-click)
+    this.game.canvas.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+    });
+
     // Combat manager (initialized after player spawns)
     this.combatManager = new CombatManager(this);
 
@@ -249,9 +254,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private spawnLocalPlayer(x: number, y: number) {
-    this.localPlayer = this.physics.add.sprite(x, y, "player");
+    this.localPlayer = this.physics.add.sprite(x, y, "player_sheet");
     this.localPlayer.setOrigin(0.5, 0.5);
     this.localPlayer.setDepth(10);
+    this.localPlayer.setTint(0x00ff88);
+    this.localPlayer.play("player_idle");
 
     // Circular physics body (kept for overlap detection, not for movement)
     const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
@@ -374,11 +381,18 @@ export class GameScene extends Phaser.Scene {
           this.localRangedWeaponId = player.rangedWeaponId ?? "";
           this.combatManager.setMeleeWeapon(this.localMeleeWeaponId);
           this.combatManager.setRangedWeapon(this.localRangedWeaponId);
-          console.log("Local player spawned");
+
+          // If joining as eliminated (late joiner), enter spectator immediately
+          if (this.localEliminated) {
+            this.enterSpectatorMode();
+          }
+          console.log("Local player spawned", this.localEliminated ? "(eliminated, spectating)" : "");
         } else {
-          const sprite = this.add.sprite(player.x, player.y, "player_remote");
+          const sprite = this.add.sprite(player.x, player.y, "player_sheet");
           sprite.setOrigin(0.5, 0.5);
           sprite.setDepth(9);
+          sprite.setTint(0xff4444);
+          sprite.play("player_idle");
           this.remotePlayers.set(sessionId, sprite);
           this.remoteTargets.set(sessionId, {
             x: player.x,
@@ -418,6 +432,7 @@ export class GameScene extends Phaser.Scene {
             // Handle local player death state from server
             if (player.state === "dead" && this.localPlayer) {
               this.localPlayer.setAlpha(0.3);
+              this.localPlayer.play("player_death", true);
             }
 
             // Enter spectator mode when eliminated during play
@@ -479,7 +494,8 @@ export class GameScene extends Phaser.Scene {
         const weapon = getWeaponConfig(pickup.weaponId);
         const color = weapon?.color ?? 0xffffff;
 
-        const sprite = this.add.sprite(0, 0, "pickup");
+        const pickupTexKey = this.getPickupTexture(pickup.weaponId);
+        const sprite = this.add.sprite(0, 0, pickupTexKey);
         sprite.setTint(color);
         sprite.setOrigin(0.5, 0.5);
 
@@ -517,11 +533,13 @@ export class GameScene extends Phaser.Scene {
         // Skip projectiles owned by local player (already shown via client prediction)
         if (proj.ownerId === room.sessionId) return;
 
-        const sprite = this.add.sprite(proj.x, proj.y, "projectile");
+        const texKey = proj.charged
+          ? "proj_charged"
+          : this.getProjectileTexture(proj.weaponId ?? "");
+        const sprite = this.add.sprite(proj.x, proj.y, texKey);
         sprite.setDepth(8);
         sprite.setOrigin(0.5, 0.5);
         if (proj.charged) {
-          sprite.setTint(0xff8800);
           sprite.setScale(2);
         }
         this.serverProjectileSprites.set(proj.id, sprite);
@@ -588,6 +606,7 @@ export class GameScene extends Phaser.Scene {
         this.matchWinner = null;
         this.localEliminated = false;
         this.exitSpectatorMode();
+        this.events.emit("sfx:match_start");
       });
 
       room.onMessage("match_end", (data: any) => {
@@ -603,6 +622,9 @@ export class GameScene extends Phaser.Scene {
 
       room.onMessage("match_countdown", (data: any) => {
         this.matchCountdownSeconds = data.seconds ?? 0;
+        if (data.seconds > 0) {
+          this.events.emit("sfx:countdown_beep");
+        }
       });
 
       room.onMessage("respawn", (data: any) => {
@@ -628,6 +650,7 @@ export class GameScene extends Phaser.Scene {
       room.onMessage("locker_opened", (data: any) => {
         // Particle burst at locker location
         this.particles.impact(data.x, data.y, 0x8B6914);
+        this.events.emit("sfx:locker_open");
       });
 
       room.onMessage("weapon_pickup", (data: any) => {
@@ -636,6 +659,7 @@ export class GameScene extends Phaser.Scene {
           if (this.localPlayer) {
             this.particles.impact(this.localPlayer.x, this.localPlayer.y, 0x00ff88);
           }
+          this.events.emit("sfx:pickup");
         }
       });
 
@@ -766,6 +790,15 @@ export class GameScene extends Phaser.Scene {
       // Rotate player toward mouse
       this.localPlayer.setRotation(aimAngle);
 
+      // Animate local player
+      if (dashState) {
+        this.localPlayer.play("player_walk", true);
+      } else if (dx !== 0 || dy !== 0) {
+        this.localPlayer.play("player_walk", true);
+      } else {
+        this.localPlayer.play("player_idle", true);
+      }
+
       // Combat aim
       this.combatManager.setAimAngle(aimAngle);
 
@@ -795,11 +828,16 @@ export class GameScene extends Phaser.Scene {
         sprite.y = Phaser.Math.Linear(sprite.y, target.y, lerpFactor);
         sprite.setRotation(target.angle);
 
-        // Death state: fade out
+        // Death state: fade out + death animation
         if (target.state === "dead") {
           sprite.setAlpha(0.3);
+          sprite.play("player_death", true);
+        } else if (target.state === "moving") {
+          sprite.setAlpha(1);
+          sprite.play("player_walk", true);
         } else {
           sprite.setAlpha(1);
+          sprite.play("player_idle", true);
         }
 
         // Update health bar
@@ -897,6 +935,23 @@ export class GameScene extends Phaser.Scene {
       alivePlayers: this.matchAlivePlayers,
       localEliminated: this.localEliminated,
     });
+  }
+
+  /** Get per-weapon projectile texture key */
+  private getProjectileTexture(weaponId: string): string {
+    switch (weaponId) {
+      case "darts": return "proj_darts";
+      case "plates": return "proj_plates";
+      case "staple_gun": return "proj_staple_gun";
+      default: return "proj_default";
+    }
+  }
+
+  /** Get per-weapon pickup texture key */
+  private getPickupTexture(weaponId: string): string {
+    const key = `pickup_${weaponId}`;
+    if (this.textures.exists(key)) return key;
+    return "pickup";
   }
 
   /** Get locker data for minimap rendering */
