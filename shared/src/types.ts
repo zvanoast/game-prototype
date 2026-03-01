@@ -82,6 +82,10 @@ export enum WeaponId {
   StapleGun = "staple_gun",
 }
 
+// --- Match ---
+
+export type MatchPhase = "waiting" | "countdown" | "playing" | "ended";
+
 // --- Weapon Config ---
 
 export interface WeaponConfig {

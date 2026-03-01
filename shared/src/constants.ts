@@ -82,6 +82,11 @@ export const MAX_SERVER_PROJECTILES = 100;
 export const LOCKER_INTERACT_RANGE = 48;  // pixels from player center
 export const PICKUP_RADIUS = 12;          // circle-vs-circle pickup range
 
+// --- Match Lifecycle ---
+export const MIN_PLAYERS_TO_START = 2;
+export const COUNTDOWN_DURATION_MS = 5000;
+export const POST_MATCH_DELAY_MS = 5000;
+
 // --- Network ---
 export const SERVER_PORT = 3001;
 export const MAX_PLAYERS_PER_ROOM = 20;

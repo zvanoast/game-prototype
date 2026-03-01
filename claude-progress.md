@@ -170,3 +170,59 @@
 - **WeaponHud** (`client/src/ui/WeaponHud.ts`): bottom-center overlay showing `[RMB] weapon` + `[LMB] weapon`
 - **DebugOverlay**: added equipped weapon names row (melee + ranged), expanded to 20 rows
 - **Minimap**: locker dots (orange = closed, gray = open)
+
+## Phase 5: Game Loop — Match Lifecycle & Elimination — COMPLETE
+
+### Shared
+- `shared/src/constants.ts` — `MIN_PLAYERS_TO_START`, `COUNTDOWN_DURATION_MS`, `POST_MATCH_DELAY_MS`
+- `shared/src/types.ts` — `MatchPhase` type (`"waiting" | "countdown" | "playing" | "ended"`)
+
+### Server Schemas
+- `PlayerSchema.eliminated` (boolean) — distinguishes eliminated-from-match vs dead-waiting-to-respawn
+- `GameStateSchema.alivePlayers` (uint8), `countdownSeconds` (uint8), `winnerId` (string)
+
+### Server MatchSystem (`server/src/systems/MatchSystem.ts`)
+- Phase state machine: waiting → countdown → playing → ended → waiting
+- `waiting`: accepts players, transitions to countdown when >= 2 players
+- `countdown`: 5-second timer, reverts to waiting if players drop below minimum
+- `playing`: combat enabled, no respawning — deaths are permanent eliminations
+- `ended`: 5-second delay, then full match reset
+- Broadcasts: `match_countdown`, `match_start`, `match_end`, `player_eliminated`
+- `resetMatch()`: respawns all players, resets equipment/lockers/pickups/projectiles
+
+### Server LootSystem Changes
+- `resetPlayerEquipment(sessionId)`: resets to Fists without dropping
+- `resetForNewMatch()`: clears pickups, re-closes lockers with new random weapons
+
+### Server CombatSystem Changes
+- `setMatchSystem()`: takes MatchSystem reference
+- `processInput()`: gates combat by `matchSystem.canAttack()` (only during "playing")
+- `updateRespawns()`: skips during "playing" phase (eliminated players stay dead)
+- `applyDamage()` on kill: calls `matchSystem.onPlayerKilled()` during playing, normal respawn otherwise
+- `resetForNewMatch()`: clears all projectiles and combat state
+- Kill broadcast now includes `weaponName`
+
+### Server GameRoom Changes
+- MatchSystem instantiated in `onCreate()`, cross-wired with CombatSystem
+- `onJoin()`/`onLeave()` call MatchSystem
+- `tick()` calls `matchSystem.tick()`, gates movement during "ended" phase
+
+### Client MatchHud (`client/src/ui/MatchHud.ts`)
+- Phase banner (top-center): "Waiting for players..." / "Match starting..." / "X players alive" / "Match Over"
+- Countdown overlay: large centered number during countdown
+- Eliminated overlay: "YOU WERE ELIMINATED (Spectating)"
+- Victory/Defeat/Draw overlay at match end
+- Kill feed (top-right): max 5 entries, fade after 5s
+
+### Client GameScene Changes
+- Phase tracking from `room.state.onChange` + message handlers
+- `localEliminated` tracked from `PlayerSchema.eliminated`
+- Spectator mode: camera follows alive remote players, cycle with left/right arrow keys
+- Spectate label shows name of followed player
+- Kill feed integration: kill messages show killer/victim names + weapon
+- New message handlers: `match_start`, `match_end`, `match_countdown`, `player_eliminated`
+- Respawn handler clears eliminated state and exits spectator mode
+- Player display names assigned on join order
+
+### Debug Overlay
+- Added: match phase, alive count, eliminated status (expanded to 22 rows)

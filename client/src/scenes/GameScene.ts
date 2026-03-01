@@ -3,6 +3,7 @@ import { NetworkManager } from "../network/NetworkManager";
 import { DebugOverlay } from "../ui/DebugOverlay";
 import { Minimap } from "../ui/Minimap";
 import { WeaponHud } from "../ui/WeaponHud";
+import { MatchHud } from "../ui/MatchHud";
 import { DamageNumberManager } from "../ui/DamageNumber";
 import { TilemapManager } from "../world/TilemapManager";
 import { CombatManager } from "../systems/CombatManager";
@@ -62,6 +63,7 @@ export class GameScene extends Phaser.Scene {
   private debugOverlay!: DebugOverlay;
   private minimap!: Minimap;
   private weaponHud!: WeaponHud;
+  private matchHud!: MatchHud;
   private tilemapManager!: TilemapManager;
   private combatManager!: CombatManager;
   private damageNumbers!: DamageNumberManager;
@@ -100,6 +102,23 @@ export class GameScene extends Phaser.Scene {
   // Equipment tracking
   private localMeleeWeaponId = WeaponId.Fists as string;
   private localRangedWeaponId = "";
+
+  // Match state
+  private matchPhase: string = "waiting";
+  private localEliminated = false;
+  private matchWinner: boolean | null = null; // true=won, false=lost, null=draw/unknown
+  private matchAlivePlayers = 0;
+  private matchTotalPlayers = 0;
+  private matchCountdownSeconds = 0;
+
+  // Spectator mode
+  private spectating = false;
+  private spectateTargetId: string | null = null;
+  private spectateLabel: Phaser.GameObjects.Text | null = null;
+
+  // Player names (session prefix)
+  private playerNames = new Map<string, string>();
+  private playerJoinOrder = 0;
 
   // Button state tracking
   private attackHeld = false;
@@ -184,6 +203,9 @@ export class GameScene extends Phaser.Scene {
     // Weapon HUD
     this.weaponHud = new WeaponHud(this);
 
+    // Match HUD
+    this.matchHud = new MatchHud(this);
+
     // Damage numbers
     this.damageNumbers = new DamageNumberManager(this);
 
@@ -198,6 +220,18 @@ export class GameScene extends Phaser.Scene {
     this.interactPrompt.setOrigin(0.5, 1);
     this.interactPrompt.setDepth(50);
     this.interactPrompt.setVisible(false);
+
+    // Spectator label (shown above followed player)
+    this.spectateLabel = this.add.text(0, 0, "", {
+      fontSize: "12px",
+      fontFamily: "monospace",
+      color: "#ffcc00",
+      backgroundColor: "#000000aa",
+      padding: { x: 4, y: 2 },
+    });
+    this.spectateLabel.setOrigin(0.5, 1);
+    this.spectateLabel.setDepth(100);
+    this.spectateLabel.setVisible(false);
 
     // Combat manager (initialized after player spawns)
     this.combatManager = new CombatManager(this);
@@ -301,11 +335,41 @@ export class GameScene extends Phaser.Scene {
       // Enable multiplayer mode on combat manager (disable local damage)
       this.combatManager.setMultiplayerMode(true);
 
+      // Track phase changes from state
+      const trackState = () => {
+        const state = room.state as any;
+        this.matchPhase = state.phase ?? "waiting";
+        this.matchAlivePlayers = state.alivePlayers ?? 0;
+        this.matchCountdownSeconds = state.countdownSeconds ?? 0;
+        this.matchTotalPlayers = state.players?.size ?? 0;
+
+        // Determine win state
+        if (this.matchPhase === "ended") {
+          const winnerId = state.winnerId ?? "";
+          if (!winnerId) {
+            this.matchWinner = null; // draw
+          } else if (winnerId === room.sessionId) {
+            this.matchWinner = true;
+          } else {
+            this.matchWinner = false;
+          }
+        }
+      };
+
+      room.state.onChange(() => {
+        trackState();
+      });
+
       room.state.players.onAdd((player: any, sessionId: string) => {
+        // Assign display name
+        this.playerJoinOrder++;
+        this.playerNames.set(sessionId, `Player ${this.playerJoinOrder}`);
+
         if (sessionId === room.sessionId) {
           this.spawnLocalPlayer(player.x, player.y);
           this.localHealth = player.health;
           this.localKills = player.kills ?? 0;
+          this.localEliminated = player.eliminated ?? false;
           this.localMeleeWeaponId = player.meleeWeaponId ?? WeaponId.Fists;
           this.localRangedWeaponId = player.rangedWeaponId ?? "";
           this.combatManager.setMeleeWeapon(this.localMeleeWeaponId);
@@ -337,6 +401,7 @@ export class GameScene extends Phaser.Scene {
             this.reconcile(player);
             this.localHealth = player.health;
             this.localKills = player.kills ?? 0;
+            this.localEliminated = player.eliminated ?? false;
 
             // Track weapon changes
             const newMelee = player.meleeWeaponId ?? WeaponId.Fists;
@@ -353,6 +418,11 @@ export class GameScene extends Phaser.Scene {
             // Handle local player death state from server
             if (player.state === "dead" && this.localPlayer) {
               this.localPlayer.setAlpha(0.3);
+            }
+
+            // Enter spectator mode when eliminated during play
+            if (this.localEliminated && this.matchPhase === "playing" && !this.spectating) {
+              this.enterSpectatorMode();
             }
           } else {
             this.remoteTargets.set(sessionId, {
@@ -378,6 +448,13 @@ export class GameScene extends Phaser.Scene {
           hpBar.destroy();
           this.remoteHealthBars.delete(sessionId);
         }
+        this.playerNames.delete(sessionId);
+
+        // If spectating this player, cycle to next
+        if (this.spectateTargetId === sessionId) {
+          this.cycleSpectateTarget(1);
+        }
+
         console.log(`Remote player left: ${sessionId}`);
       });
 
@@ -491,6 +568,41 @@ export class GameScene extends Phaser.Scene {
         // Death explosion at victim location
         this.particles.deathExplosion(data.x, data.y);
         this.events.emit("sfx:death");
+
+        // Kill feed
+        const killerName = this.playerNames.get(data.killerId) ?? data.killerId?.substring(0, 6) ?? "???";
+        const victimName = this.playerNames.get(data.victimId) ?? data.victimId?.substring(0, 6) ?? "???";
+        const weaponName = data.weaponName ?? "???";
+        this.matchHud.showKillFeed(killerName, victimName, weaponName);
+      });
+
+      room.onMessage("player_eliminated", (data: any) => {
+        // If the spectated player was eliminated, cycle
+        if (this.spectating && this.spectateTargetId === data.sessionId) {
+          this.cycleSpectateTarget(1);
+        }
+      });
+
+      room.onMessage("match_start", () => {
+        this.matchPhase = "playing";
+        this.matchWinner = null;
+        this.localEliminated = false;
+        this.exitSpectatorMode();
+      });
+
+      room.onMessage("match_end", (data: any) => {
+        this.matchPhase = "ended";
+        if (!data.winnerId) {
+          this.matchWinner = null;
+        } else if (data.winnerId === room.sessionId) {
+          this.matchWinner = true;
+        } else {
+          this.matchWinner = false;
+        }
+      });
+
+      room.onMessage("match_countdown", (data: any) => {
+        this.matchCountdownSeconds = data.seconds ?? 0;
       });
 
       room.onMessage("respawn", (data: any) => {
@@ -502,6 +614,10 @@ export class GameScene extends Phaser.Scene {
           this.velocityY = 0;
           this.pendingInputs = [];
           this.localHealth = MAX_HEALTH;
+          this.localEliminated = false;
+
+          // Exit spectator mode on respawn (match reset)
+          this.exitSpectatorMode();
         }
       });
 
@@ -581,8 +697,18 @@ export class GameScene extends Phaser.Scene {
       this.stateMachine.setDashAngle(dashAngle);
     }
 
-    // Don't send input or process movement if dead
-    const isDead = this.localHealth <= 0;
+    // Don't send input or process movement if dead or eliminated
+    const isDead = this.localHealth <= 0 || this.localEliminated;
+
+    // Spectator mode: cycle with left/right arrow keys
+    if (this.spectating) {
+      if (Phaser.Input.Keyboard.JustDown(this.keys.LEFT)) {
+        this.cycleSpectateTarget(-1);
+      }
+      if (Phaser.Input.Keyboard.JustDown(this.keys.RIGHT)) {
+        this.cycleSpectateTarget(1);
+      }
+    }
 
     // Send input to server
     if (this.network.getRoom()) {
@@ -706,8 +832,38 @@ export class GameScene extends Phaser.Scene {
       this.minimap.update(this.localPlayer.x, this.localPlayer.y, this.getLockerData());
     }
 
+    // Update spectator camera
+    if (this.spectating && this.spectateTargetId) {
+      const targetSprite = this.remotePlayers.get(this.spectateTargetId);
+      if (targetSprite) {
+        this.cameras.main.centerOn(targetSprite.x, targetSprite.y);
+        if (this.spectateLabel) {
+          const name = this.playerNames.get(this.spectateTargetId) ?? this.spectateTargetId.substring(0, 6);
+          this.spectateLabel.setText(`Spectating: ${name} [< >]`);
+          this.spectateLabel.setPosition(targetSprite.x, targetSprite.y - PLAYER_RADIUS - 14);
+          this.spectateLabel.setVisible(true);
+        }
+      } else {
+        // Target gone, try to find another
+        this.cycleSpectateTarget(1);
+      }
+    } else if (this.spectateLabel) {
+      this.spectateLabel.setVisible(false);
+    }
+
     // Update weapon HUD
     this.weaponHud.update(this.localMeleeWeaponId, this.localRangedWeaponId);
+
+    // Update match HUD
+    this.matchHud.update(
+      this.matchPhase,
+      this.matchAlivePlayers,
+      this.matchTotalPlayers,
+      this.localEliminated,
+      this.matchWinner,
+      this.matchCountdownSeconds,
+      delta
+    );
 
     // Flush artificial latency queue
     this.network.flush();
@@ -737,6 +893,9 @@ export class GameScene extends Phaser.Scene {
       serverProjectileCount: this.serverProjectileCount,
       meleeWeaponName: meleeWeapon?.name ?? "Fists",
       rangedWeaponName: rangedWeapon?.name ?? "--",
+      matchPhase: this.matchPhase,
+      alivePlayers: this.matchAlivePlayers,
+      localEliminated: this.localEliminated,
     });
   }
 
@@ -854,6 +1013,53 @@ export class GameScene extends Phaser.Scene {
     // Set position directly on game object — Phaser body syncs automatically
     this.localPlayer.x = resolved.x;
     this.localPlayer.y = resolved.y;
+  }
+
+  private enterSpectatorMode() {
+    this.spectating = true;
+    if (this.localPlayer) {
+      this.localPlayer.setAlpha(0);
+      this.cameras.main.stopFollow();
+    }
+    // Pick first alive remote player to spectate
+    this.cycleSpectateTarget(1);
+  }
+
+  private exitSpectatorMode() {
+    this.spectating = false;
+    this.spectateTargetId = null;
+    if (this.spectateLabel) {
+      this.spectateLabel.setVisible(false);
+    }
+    if (this.localPlayer) {
+      this.localPlayer.setAlpha(1);
+      this.cameras.main.startFollow(this.localPlayer, true, 0.08, 0.08);
+      this.cameras.main.setDeadzone(40, 40);
+    }
+  }
+
+  private cycleSpectateTarget(direction: number) {
+    // Get list of alive remote player session IDs
+    const aliveIds: string[] = [];
+    this.remoteTargets.forEach((data, id) => {
+      if (data.state !== "dead") {
+        aliveIds.push(id);
+      }
+    });
+
+    if (aliveIds.length === 0) {
+      this.spectateTargetId = null;
+      return;
+    }
+
+    if (!this.spectateTargetId || !aliveIds.includes(this.spectateTargetId)) {
+      this.spectateTargetId = aliveIds[0];
+      return;
+    }
+
+    const currentIdx = aliveIds.indexOf(this.spectateTargetId);
+    const nextIdx = ((currentIdx + direction) % aliveIds.length + aliveIds.length) % aliveIds.length;
+    this.spectateTargetId = aliveIds[nextIdx];
   }
 
   private reconcile(serverPlayer: any) {

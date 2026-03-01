@@ -2,6 +2,7 @@ import { Room, Client } from "colyseus";
 import { GameStateSchema, PlayerSchema } from "../state/GameState";
 import { CombatSystem } from "../systems/CombatSystem";
 import { LootSystem } from "../systems/LootSystem";
+import { MatchSystem } from "../systems/MatchSystem";
 import {
   TICK_RATE,
   TICK_INTERVAL_MS,
@@ -26,6 +27,7 @@ export class GameRoom extends Room<GameStateSchema> {
   private wallRects!: WallRect[];
   private combatSystem!: CombatSystem;
   private lootSystem!: LootSystem;
+  private matchSystem!: MatchSystem;
 
   // Track previous buttons per player for edge detection
   private prevButtons = new Map<string, number>();
@@ -41,6 +43,14 @@ export class GameRoom extends Room<GameStateSchema> {
     this.lootSystem = new LootSystem(this, this.state);
     this.lootSystem.initLockers();
 
+    // Create match system
+    this.matchSystem = new MatchSystem(
+      this,
+      this.state,
+      this.lootSystem,
+      () => this.findSafeSpawn()
+    );
+
     // Create combat system
     this.combatSystem = new CombatSystem(
       this,
@@ -49,6 +59,10 @@ export class GameRoom extends Room<GameStateSchema> {
       () => this.findSafeSpawn(),
       this.lootSystem
     );
+
+    // Cross-wire systems
+    this.combatSystem.setMatchSystem(this.matchSystem);
+    this.matchSystem.setCombatSystem(this.combatSystem);
 
     // Listen for input messages
     this.onMessage("input", (client: Client, input: InputPayload) => {
@@ -84,14 +98,16 @@ export class GameRoom extends Room<GameStateSchema> {
     this.state.players.set(client.sessionId, player);
     this.combatSystem.registerPlayer(client.sessionId);
     this.lootSystem.registerPlayer(client.sessionId);
+    this.matchSystem.onPlayerJoin(client.sessionId);
     this.prevButtons.set(client.sessionId, 0);
     console.log(`Player joined: ${client.sessionId} at (${player.x.toFixed(0)}, ${player.y.toFixed(0)})`);
   }
 
   onLeave(client: Client) {
     this.lootSystem.unregisterPlayer(client.sessionId);
-    this.state.players.delete(client.sessionId);
     this.combatSystem.unregisterPlayer(client.sessionId);
+    this.matchSystem.onPlayerLeave(client.sessionId);
+    this.state.players.delete(client.sessionId);
     this.prevButtons.delete(client.sessionId);
     console.log(`Player left: ${client.sessionId}`);
   }
@@ -128,66 +144,78 @@ export class GameRoom extends Room<GameStateSchema> {
 
   private tick() {
     const tick = this.state.tick;
+    const phase = this.matchSystem.getPhase();
+    const frozen = phase === "ended";
 
     // Process all queued inputs
     for (const { sessionId, input } of this.inputQueue) {
       const player = this.state.players.get(sessionId);
-      if (!player || player.state === "dead") continue;
+      if (!player || player.state === "dead") {
+        // Still track last processed input for reconciliation even when dead
+        if (player) player.lastProcessedInput = input.seq;
+        continue;
+      }
 
       // Use client's dt if provided, otherwise use fixed tick dt
       const dt = (typeof input.dt === "number" && input.dt > 0 && input.dt < 0.1)
         ? input.dt
         : 1 / TICK_RATE;
 
-      // Clamp input direction
-      const dx = Math.max(-1, Math.min(1, input.dx));
-      const dy = Math.max(-1, Math.min(1, input.dy));
+      // Movement (frozen during ended phase)
+      if (!frozen) {
+        // Clamp input direction
+        const dx = Math.max(-1, Math.min(1, input.dx));
+        const dy = Math.max(-1, Math.min(1, input.dy));
 
-      // Shared acceleration-based movement
-      const moveResult = applyMovement(
-        player.x, player.y,
-        player.vx, player.vy,
-        dx, dy, dt
-      );
+        // Shared acceleration-based movement
+        const moveResult = applyMovement(
+          player.x, player.y,
+          player.vx, player.vy,
+          dx, dy, dt
+        );
 
-      // Shared wall collision resolution
-      const resolved = resolveWallCollisions(
-        moveResult.x, moveResult.y,
-        PLAYER_RADIUS, this.wallRects
-      );
+        // Shared wall collision resolution
+        const resolved = resolveWallCollisions(
+          moveResult.x, moveResult.y,
+          PLAYER_RADIUS, this.wallRects
+        );
 
-      // If wall collision pushed us back, zero velocity in that axis
-      let finalVx = moveResult.vx;
-      let finalVy = moveResult.vy;
-      if (Math.abs(resolved.x - moveResult.x) > 0.01) {
-        finalVx = 0;
+        // If wall collision pushed us back, zero velocity in that axis
+        let finalVx = moveResult.vx;
+        let finalVy = moveResult.vy;
+        if (Math.abs(resolved.x - moveResult.x) > 0.01) {
+          finalVx = 0;
+        }
+        if (Math.abs(resolved.y - moveResult.y) > 0.01) {
+          finalVy = 0;
+        }
+
+        // Update player state
+        player.x = resolved.x;
+        player.y = resolved.y;
+        player.vx = finalVx;
+        player.vy = finalVy;
+
+        const mag = Math.sqrt(dx * dx + dy * dy);
+        player.state = mag > 0.1 ? "moving" : "idle";
       }
-      if (Math.abs(resolved.y - moveResult.y) > 0.01) {
-        finalVy = 0;
-      }
 
-      // Update player state
-      player.x = resolved.x;
-      player.y = resolved.y;
-      player.vx = finalVx;
-      player.vy = finalVy;
       player.angle = input.aimAngle;
-
-      const mag = Math.sqrt(dx * dx + dy * dy);
-      player.state = mag > 0.1 ? "moving" : "idle";
 
       // Track last processed input for client reconciliation
       player.lastProcessedInput = input.seq;
 
-      // Detect INTERACT press (edge detection)
-      const prev = this.prevButtons.get(sessionId) ?? 0;
-      const interactPressed = !!(input.buttons & Button.INTERACT) && !(prev & Button.INTERACT);
-      if (interactPressed) {
-        this.lootSystem.processInteract(sessionId);
+      // Detect INTERACT press (edge detection) — allowed during waiting/countdown/playing
+      if (!frozen) {
+        const prev = this.prevButtons.get(sessionId) ?? 0;
+        const interactPressed = !!(input.buttons & Button.INTERACT) && !(prev & Button.INTERACT);
+        if (interactPressed) {
+          this.lootSystem.processInteract(sessionId);
+        }
+        this.prevButtons.set(sessionId, input.buttons);
       }
-      this.prevButtons.set(sessionId, input.buttons);
 
-      // Process combat input
+      // Process combat input (CombatSystem internally gates by match phase)
       this.combatSystem.processInput(sessionId, input, tick);
     }
 
@@ -202,6 +230,9 @@ export class GameRoom extends Room<GameStateSchema> {
 
     // Tick respawns
     this.combatSystem.updateRespawns(TICK_INTERVAL_MS);
+
+    // Tick match system (phase transitions, timers)
+    this.matchSystem.tick(TICK_INTERVAL_MS);
 
     // Advance server tick
     this.state.tick++;

@@ -1,6 +1,7 @@
 import { Room } from "colyseus";
 import { GameStateSchema, PlayerSchema, ProjectileSchema } from "../state/GameState";
 import { LootSystem } from "./LootSystem";
+import type { MatchSystem } from "./MatchSystem";
 import type { InputPayload, WallRect } from "shared";
 import {
   PLAYER_RADIUS,
@@ -43,6 +44,7 @@ export class CombatSystem {
   private state: GameStateSchema;
   private wallRects: WallRect[];
   private lootSystem: LootSystem;
+  private matchSystem: MatchSystem | null = null;
   private playerCombat = new Map<string, PlayerCombatState>();
   private projectiles: ServerProjectile[] = [];
   private nextProjectileId = 1;
@@ -60,6 +62,10 @@ export class CombatSystem {
     this.wallRects = wallRects;
     this.findSafeSpawn = findSafeSpawn;
     this.lootSystem = lootSystem;
+  }
+
+  setMatchSystem(matchSystem: MatchSystem) {
+    this.matchSystem = matchSystem;
   }
 
   registerPlayer(sessionId: string) {
@@ -86,6 +92,13 @@ export class CombatSystem {
 
     const buttons = input.buttons;
     const prevButtons = combat.lastButtons;
+
+    // If combat is not allowed (waiting, countdown, ended), just track buttons
+    if (this.matchSystem && !this.matchSystem.canAttack()) {
+      combat.lastButtons = buttons;
+      combat.chargeFrameCount = 0;
+      return;
+    }
 
     const attackDown = !!(buttons & Button.ATTACK);
     const attackWasDown = !!(prevButtons & Button.ATTACK);
@@ -331,14 +344,26 @@ export class CombatSystem {
       // Drop weapons at death location
       this.lootSystem.onPlayerRespawn(targetId, target.x, target.y);
 
-      const combat = this.playerCombat.get(targetId);
-      if (combat) {
-        combat.respawnTimer = RESPAWN_TIME_MS;
+      // Determine weapon name for kill feed
+      const weaponName = type === "melee"
+        ? (this.lootSystem.getPlayerMeleeConfig(attackerId)?.name ?? "Fists")
+        : (this.lootSystem.getPlayerRangedConfig(attackerId)?.name ?? "Ranged");
+
+      // During match play, eliminate instead of respawning
+      if (this.matchSystem && this.matchSystem.getPhase() === "playing") {
+        this.matchSystem.onPlayerKilled(targetId, attackerId, weaponName);
+      } else {
+        // Sandbox/waiting/countdown: normal respawn
+        const combat = this.playerCombat.get(targetId);
+        if (combat) {
+          combat.respawnTimer = RESPAWN_TIME_MS;
+        }
       }
 
       this.room.broadcast("kill", {
         killerId: attackerId,
         victimId: targetId,
+        weaponName,
         x: target.x,
         y: target.y,
       });
@@ -346,6 +371,9 @@ export class CombatSystem {
   }
 
   updateRespawns(dtMs: number) {
+    // During "playing" phase, dead players stay dead (eliminated)
+    if (this.matchSystem && this.matchSystem.getPhase() === "playing") return;
+
     this.playerCombat.forEach((combat, sessionId) => {
       if (combat.respawnTimer <= 0) return;
 
@@ -374,6 +402,20 @@ export class CombatSystem {
           y: spawn.y,
         });
       }
+    });
+  }
+
+  /** Clear all projectiles and reset all player combat state for a new match */
+  resetForNewMatch() {
+    this.projectiles = [];
+    this.syncProjectilesToSchema();
+
+    this.playerCombat.forEach((combat) => {
+      combat.lastShootTick = -100;
+      combat.lastMeleeTick = -100;
+      combat.lastButtons = 0;
+      combat.chargeFrameCount = 0;
+      combat.respawnTimer = 0;
     });
   }
 

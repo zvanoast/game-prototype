@@ -256,4 +256,38 @@ export class LootSystem {
     if (!equip || !equip.rangedWeaponId) return null;
     return getWeaponConfig(equip.rangedWeaponId) ?? null;
   }
+
+  /** Reset a single player's equipment to Fists (no drops) */
+  resetPlayerEquipment(sessionId: string) {
+    const equip = this.playerEquipment.get(sessionId);
+    const player = this.state.players.get(sessionId);
+    if (equip) {
+      equip.meleeWeaponId = WeaponId.Fists;
+      equip.rangedWeaponId = "";
+    }
+    if (player) {
+      player.meleeWeaponId = WeaponId.Fists;
+      player.rangedWeaponId = "";
+    }
+  }
+
+  /** Reset all loot for a new match: re-close lockers, clear pickups */
+  resetForNewMatch() {
+    // Clear all pickups
+    while (this.state.pickups.length > 0) {
+      this.state.pickups.pop();
+    }
+    this.pickupSpawnTick.clear();
+    this.nextPickupId = 1;
+
+    // Re-close all lockers with new random weapons
+    for (let i = 0; i < this.state.lockers.length; i++) {
+      const locker = this.state.lockers.at(i);
+      if (!locker) continue;
+      locker.opened = false;
+      locker.containedWeaponId = LOOTABLE_WEAPON_IDS[
+        Math.floor(Math.random() * LOOTABLE_WEAPON_IDS.length)
+      ];
+    }
+  }
 }

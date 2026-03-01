@@ -22,6 +22,7 @@ export class PlayerSchema extends Schema {
   @type("uint32") lastProcessedInput: number = 0;
   @type("string") meleeWeaponId: string = "fists";
   @type("string") rangedWeaponId: string = "";
+  @type("boolean") eliminated: boolean = false;
 }
 
 export class LockerSchema extends Schema {
@@ -44,6 +45,9 @@ export class GameStateSchema extends Schema {
   @type([ ProjectileSchema ]) projectiles = new ArraySchema<ProjectileSchema>();
   @type([ LockerSchema ]) lockers = new ArraySchema<LockerSchema>();
   @type([ PickupSchema ]) pickups = new ArraySchema<PickupSchema>();
-  @type("string") phase: string = "waiting"; // waiting | playing | ended
+  @type("string") phase: string = "waiting"; // waiting | countdown | playing | ended
   @type("uint32") tick: number = 0;
+  @type("uint8") alivePlayers: number = 0;
+  @type("uint8") countdownSeconds: number = 0;
+  @type("string") winnerId: string = "";
 }
