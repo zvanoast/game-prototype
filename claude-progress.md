@@ -63,4 +63,54 @@
 - Number keys 1-5 set 0/50/100/200/500ms artificial latency
 - Debug overlay shows: prediction delta distance, pending input count, artificial latency setting
 
-## Phase 3B: TBD
+## Phase 3B: Server-Authoritative Combat — COMPLETE
+
+### Shared Types
+- `Button.MELEE = 1 << 4` added so right-click melee reaches server via buttons bitfield
+- Server combat constants: `SHOOT_COOLDOWN_TICKS`, `MELEE_COOLDOWN_TICKS`, `RESPAWN_TIME_MS`, `MAX_SERVER_PROJECTILES`
+
+### Server Schemas
+- `ProjectileSchema`: id, x, y, angle, speed, ownerId, charged — synced to all clients via ArraySchema
+- `PlayerSchema.kills` (uint8) added for kill tracking
+- `GameStateSchema.projectiles` ArraySchema added
+
+### Server CombatSystem (`server/src/systems/CombatSystem.ts`)
+- Per-player combat state: lastShootTick, lastMeleeTick, lastButtons, chargeFrameCount, respawnTimer
+- `processInput()`: detects ATTACK press → fire projectile; ATTACK release after 20+ held frames → fire charged projectile (3x damage, faster, bigger); MELEE press → angle+distance check against all living players
+- `tickProjectiles()`: advances positions, checks wall collision (point-in-AABB with radius), checks player collision (circle-vs-circle), removes on hit/range/wall
+- `applyDamage()`: reduces health, broadcasts "hit" message, checks for kill → broadcasts "kill", starts respawn timer
+- `updateRespawns()`: ticks respawn timers, teleports to safe spawn on expiry, broadcasts "respawn"
+- All damage is server-authoritative; clients never modify health
+
+### GameRoom Integration
+- CombatSystem instantiated in `onCreate()`, players registered/unregistered in `onJoin()`/`onLeave()`
+- `tick()` calls `processInput()` per queued input, `tickProjectiles()`, `updateRespawns()`
+
+### Client Combat Messages
+- `room.onMessage("hit")` → damage numbers (via event system), impact particles, screen shake if local player hit
+- `room.onMessage("melee_hit")` → impact particles at attacker position
+- `room.onMessage("kill")` → death explosion particles
+- `room.onMessage("respawn")` → reset local player position/velocity/state, restore alpha
+- `room.onMessage("projectile_wall")` → impact particles at wall hit location
+- MELEE button bit sent via `buttons |= Button.MELEE` on right-click
+
+### CombatManager Multiplayer Mode
+- `setMultiplayerMode(true)` disables local projectile-vs-dummy collisions and local melee damage
+- Melee still shows arc visual for client-side feedback
+- Offline mode (test dummies) still works as before
+
+### Remote Player Visuals
+- `remoteTargets` expanded: x, y, angle, health, state
+- Remote player rotation applied from server angle
+- Health bars rendered above remote players (green/yellow/red based on ratio)
+- Death state: alpha set to 0.3
+
+### Server Projectile Rendering
+- `room.state.projectiles.onAdd/onRemove` creates/destroys sprites for remote player projectiles
+- Local player's own projectiles skipped (shown via client prediction)
+- Charged projectiles tinted orange + scaled 2x
+- Impact particles on projectile removal
+
+### Debug Overlay
+- Added: HP, kills, server projectile count
+- Rows expanded from 16 to 18

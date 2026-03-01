@@ -72,6 +72,12 @@ export const KNOCKBACK_MELEE = 60;
 export const KNOCKBACK_CHARGED = 100;
 export const KNOCKBACK_DECAY_FRAMES = 10;
 
+// --- Server Combat ---
+export const SHOOT_COOLDOWN_TICKS = 4;         // 200ms at 20Hz
+export const MELEE_COOLDOWN_TICKS = 8;         // 400ms at 20Hz
+export const RESPAWN_TIME_MS = 3000;
+export const MAX_SERVER_PROJECTILES = 100;
+
 // --- Network ---
 export const SERVER_PORT = 3001;
 export const MAX_PLAYERS_PER_ROOM = 20;

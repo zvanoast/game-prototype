@@ -6,6 +6,7 @@ export const enum Button {
   DASH     = 1 << 1,  // 2
   INTERACT = 1 << 2,  // 4
   RELOAD   = 1 << 3,  // 8
+  MELEE    = 1 << 4,  // 16
 }
 
 /** Payload sent from client to server every frame */

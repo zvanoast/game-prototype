@@ -19,6 +19,9 @@ export class CombatManager {
   private wallLayer!: Phaser.Tilemaps.TilemapLayer;
   private dummies: TestDummy[] = [];
 
+  // Multiplayer mode: when true, predicted projectiles only hit walls, melee is visual-only
+  private multiplayerMode = false;
+
   // Projectile pool
   private projectiles!: Phaser.Physics.Arcade.Group;
   private projectileOrigins = new Map<Phaser.GameObjects.GameObject, { x: number; y: number }>();
@@ -45,6 +48,10 @@ export class CombatManager {
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
+  }
+
+  setMultiplayerMode(enabled: boolean) {
+    this.multiplayerMode = enabled;
   }
 
   init(
@@ -85,28 +92,30 @@ export class CombatManager {
       this.destroyProjectile(proj);
     });
 
-    // Collisions: projectiles vs dummies
-    for (const dummy of this.dummies) {
-      this.scene.physics.add.overlap(this.projectiles, dummy, (obj1, obj2) => {
-        const proj = (obj1 !== dummy ? obj1 : obj2) as Phaser.Physics.Arcade.Sprite;
-        const damage = proj.getData("damage") ?? DEFAULT_WEAPON.damage;
-        const isCharged = proj.getData("charged") ?? false;
-        const knockback = isCharged ? KNOCKBACK_CHARGED : KNOCKBACK_PROJECTILE;
-        const color = isCharged ? 0xff8800 : 0xffff00;
+    // Collisions: projectiles vs dummies (only in offline/singleplayer mode)
+    if (!this.multiplayerMode) {
+      for (const dummy of this.dummies) {
+        this.scene.physics.add.overlap(this.projectiles, dummy, (obj1, obj2) => {
+          const proj = (obj1 !== dummy ? obj1 : obj2) as Phaser.Physics.Arcade.Sprite;
+          const damage = proj.getData("damage") ?? DEFAULT_WEAPON.damage;
+          const isCharged = proj.getData("charged") ?? false;
+          const knockback = isCharged ? KNOCKBACK_CHARGED : KNOCKBACK_PROJECTILE;
+          const color = isCharged ? 0xff8800 : 0xffff00;
 
-        // Knockback angle: from player toward dummy
-        const kbAngle = Math.atan2(dummy.y - this.player.y, dummy.x - this.player.x);
+          // Knockback angle: from player toward dummy
+          const kbAngle = Math.atan2(dummy.y - this.player.y, dummy.x - this.player.x);
 
-        this.scene.events.emit("particle:impact", proj.x, proj.y, color);
-        this.scene.events.emit("sfx:impact");
+          this.scene.events.emit("particle:impact", proj.x, proj.y, color);
+          this.scene.events.emit("sfx:impact");
 
-        if (isCharged) {
-          this.scene.events.emit("juice:charged_hit", this.player, dummy);
-        }
+          if (isCharged) {
+            this.scene.events.emit("juice:charged_hit", this.player, dummy);
+          }
 
-        this.destroyProjectile(proj);
-        dummy.takeDamage(damage, kbAngle, knockback);
-      });
+          this.destroyProjectile(proj);
+          dummy.takeDamage(damage, kbAngle, knockback);
+        });
+      }
     }
 
     // Set up mouse input
@@ -225,41 +234,45 @@ export class CombatManager {
     if (now - this.lastMeleeTime < DEFAULT_WEAPON.meleeCooldownMs) return;
     this.lastMeleeTime = now;
 
-    const arcHalf = Phaser.Math.DegToRad(DEFAULT_WEAPON.meleeArcDegrees / 2);
     const range = DEFAULT_WEAPON.meleeRange * rangeMult;
-    const damage = DEFAULT_WEAPON.meleeDamage * damageMult;
-    const knockback = KNOCKBACK_MELEE * knockbackMult;
 
     this.scene.events.emit("sfx:melee_swing");
 
-    let hitSomething = false;
+    // In multiplayer mode, only show the arc visual — server handles damage
+    if (!this.multiplayerMode) {
+      const arcHalf = Phaser.Math.DegToRad(DEFAULT_WEAPON.meleeArcDegrees / 2);
+      const damage = DEFAULT_WEAPON.meleeDamage * damageMult;
+      const knockback = KNOCKBACK_MELEE * knockbackMult;
 
-    for (const dummy of this.dummies) {
-      if (!dummy.isAlive()) continue;
+      let hitSomething = false;
 
-      const dx = dummy.x - this.player.x;
-      const dy = dummy.y - this.player.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      for (const dummy of this.dummies) {
+        if (!dummy.isAlive()) continue;
 
-      if (dist > range) continue;
+        const dx = dummy.x - this.player.x;
+        const dy = dummy.y - this.player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
 
-      const angleToDummy = Math.atan2(dy, dx);
-      let angleDiff = angleToDummy - this.aimAngle;
-      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        if (dist > range) continue;
 
-      if (Math.abs(angleDiff) <= arcHalf) {
-        const kbAngle = Math.atan2(dy, dx);
-        dummy.takeDamage(damage, kbAngle, knockback);
-        hitSomething = true;
+        const angleToDummy = Math.atan2(dy, dx);
+        let angleDiff = angleToDummy - this.aimAngle;
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
 
-        this.scene.events.emit("particle:impact", dummy.x, dummy.y, 0xffffff);
+        if (Math.abs(angleDiff) <= arcHalf) {
+          const kbAngle = Math.atan2(dy, dx);
+          dummy.takeDamage(damage, kbAngle, knockback);
+          hitSomething = true;
+
+          this.scene.events.emit("particle:impact", dummy.x, dummy.y, 0xffffff);
+        }
       }
-    }
 
-    if (hitSomething) {
-      this.scene.events.emit("sfx:melee_hit");
-      this.scene.events.emit("juice:melee_hit", this.player, this.dummies);
+      if (hitSomething) {
+        this.scene.events.emit("sfx:melee_hit");
+        this.scene.events.emit("juice:melee_hit", this.player, this.dummies);
+      }
     }
 
     // Show melee arc visual

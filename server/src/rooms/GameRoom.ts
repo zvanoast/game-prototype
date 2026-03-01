@@ -1,5 +1,6 @@
 import { Room, Client } from "colyseus";
 import { GameStateSchema, PlayerSchema } from "../state/GameState";
+import { CombatSystem } from "../systems/CombatSystem";
 import {
   TICK_RATE,
   TICK_INTERVAL_MS,
@@ -21,6 +22,7 @@ export class GameRoom extends Room<GameStateSchema> {
   private inputQueue: QueuedInput[] = [];
   private tickInterval!: ReturnType<typeof setInterval>;
   private wallRects!: WallRect[];
+  private combatSystem!: CombatSystem;
 
   onCreate() {
     this.setState(new GameStateSchema());
@@ -28,6 +30,14 @@ export class GameRoom extends Room<GameStateSchema> {
 
     // Pre-compute wall collision rects once
     this.wallRects = buildWallRects();
+
+    // Create combat system
+    this.combatSystem = new CombatSystem(
+      this,
+      this.state,
+      this.wallRects,
+      () => this.findSafeSpawn()
+    );
 
     // Listen for input messages
     this.onMessage("input", (client: Client, input: InputPayload) => {
@@ -61,11 +71,13 @@ export class GameRoom extends Room<GameStateSchema> {
     player.state = "idle";
 
     this.state.players.set(client.sessionId, player);
+    this.combatSystem.registerPlayer(client.sessionId);
     console.log(`Player joined: ${client.sessionId} at (${player.x.toFixed(0)}, ${player.y.toFixed(0)})`);
   }
 
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
+    this.combatSystem.unregisterPlayer(client.sessionId);
     console.log(`Player left: ${client.sessionId}`);
   }
 
@@ -100,6 +112,8 @@ export class GameRoom extends Room<GameStateSchema> {
   }
 
   private tick() {
+    const tick = this.state.tick;
+
     // Process all queued inputs
     for (const { sessionId, input } of this.inputQueue) {
       const player = this.state.players.get(sessionId);
@@ -149,10 +163,19 @@ export class GameRoom extends Room<GameStateSchema> {
 
       // Track last processed input for client reconciliation
       player.lastProcessedInput = input.seq;
+
+      // Process combat input
+      this.combatSystem.processInput(sessionId, input, tick);
     }
 
     // Clear queue
     this.inputQueue.length = 0;
+
+    // Tick projectiles
+    this.combatSystem.tickProjectiles(TICK_INTERVAL_MS);
+
+    // Tick respawns
+    this.combatSystem.updateRespawns(TICK_INTERVAL_MS);
 
     // Advance server tick
     this.state.tick++;

@@ -17,6 +17,7 @@ import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
   PLAYER_RADIUS,
+  MAX_HEALTH,
   CHARGED_SHOT_MIN_FRAMES,
   SHAKE_SHOOT_MAG,
   SHAKE_SHOOT_DURATION,
@@ -24,6 +25,8 @@ import {
   SHAKE_MELEE_HIT_DURATION,
   SHAKE_CHARGED_SHOT_MAG,
   SHAKE_CHARGED_SHOT_DURATION,
+  SHAKE_DAMAGE_MAG,
+  SHAKE_DAMAGE_DURATION,
   HITSTOP_MELEE_MS,
   HITSTOP_CHARGED_MS,
   applyMovement,
@@ -40,6 +43,14 @@ interface PendingInput {
   dt: number;
   vx: number;
   vy: number;
+}
+
+interface RemotePlayerData {
+  x: number;
+  y: number;
+  angle: number;
+  health: number;
+  state: string;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -71,11 +82,14 @@ export class GameScene extends Phaser.Scene {
 
   // Local player
   private localPlayer: Phaser.Physics.Arcade.Sprite | null = null;
+  private localSessionId: string | null = null;
   private inputSeq = 0;
   private pendingInputs: PendingInput[] = [];
   private velocityX = 0;
   private velocityY = 0;
   private offlineMode = false;
+  private localHealth = MAX_HEALTH;
+  private localKills = 0;
 
   // Button state tracking
   private attackHeld = false;
@@ -85,10 +99,17 @@ export class GameScene extends Phaser.Scene {
 
   // Remote players
   private remotePlayers = new Map<string, Phaser.GameObjects.Sprite>();
-  private remoteTargets = new Map<string, { x: number; y: number }>();
+  private remoteTargets = new Map<string, RemotePlayerData>();
+  private remoteHealthBars = new Map<string, Phaser.GameObjects.Graphics>();
+
+  // Server projectile sprites (keyed by projectile id)
+  private serverProjectileSprites = new Map<number, Phaser.GameObjects.Sprite>();
 
   // Dummies
   private dummies: TestDummy[] = [];
+
+  // Server projectile count for debug
+  private serverProjectileCount = 0;
 
   constructor() {
     super({ key: "GameScene" });
@@ -240,25 +261,56 @@ export class GameScene extends Phaser.Scene {
   private async connectToServer() {
     try {
       const room = await this.network.connect();
+      this.localSessionId = room.sessionId;
+
+      // Enable multiplayer mode on combat manager (disable local damage)
+      this.combatManager.setMultiplayerMode(true);
 
       room.state.players.onAdd((player: any, sessionId: string) => {
         if (sessionId === room.sessionId) {
           this.spawnLocalPlayer(player.x, player.y);
+          this.localHealth = player.health;
+          this.localKills = player.kills ?? 0;
           console.log("Local player spawned");
         } else {
           const sprite = this.add.sprite(player.x, player.y, "player_remote");
           sprite.setOrigin(0.5, 0.5);
           sprite.setDepth(9);
           this.remotePlayers.set(sessionId, sprite);
-          this.remoteTargets.set(sessionId, { x: player.x, y: player.y });
+          this.remoteTargets.set(sessionId, {
+            x: player.x,
+            y: player.y,
+            angle: player.angle ?? 0,
+            health: player.health ?? MAX_HEALTH,
+            state: player.state ?? "idle",
+          });
+
+          // Create health bar graphics for remote player
+          const hpBar = this.add.graphics();
+          hpBar.setDepth(15);
+          this.remoteHealthBars.set(sessionId, hpBar);
+
           console.log(`Remote player joined: ${sessionId}`);
         }
 
         player.onChange(() => {
           if (sessionId === room.sessionId) {
             this.reconcile(player);
+            this.localHealth = player.health;
+            this.localKills = player.kills ?? 0;
+
+            // Handle local player death state from server
+            if (player.state === "dead" && this.localPlayer) {
+              this.localPlayer.setAlpha(0.3);
+            }
           } else {
-            this.remoteTargets.set(sessionId, { x: player.x, y: player.y });
+            this.remoteTargets.set(sessionId, {
+              x: player.x,
+              y: player.y,
+              angle: player.angle ?? 0,
+              health: player.health ?? MAX_HEALTH,
+              state: player.state ?? "idle",
+            });
           }
         });
       });
@@ -269,8 +321,87 @@ export class GameScene extends Phaser.Scene {
           sprite.destroy();
           this.remotePlayers.delete(sessionId);
           this.remoteTargets.delete(sessionId);
-          console.log(`Remote player left: ${sessionId}`);
         }
+        const hpBar = this.remoteHealthBars.get(sessionId);
+        if (hpBar) {
+          hpBar.destroy();
+          this.remoteHealthBars.delete(sessionId);
+        }
+        console.log(`Remote player left: ${sessionId}`);
+      });
+
+      // Listen for server projectile state changes
+      room.state.projectiles.onAdd((proj: any, _key: number) => {
+        // Skip projectiles owned by local player (already shown via client prediction)
+        if (proj.ownerId === room.sessionId) return;
+
+        const sprite = this.add.sprite(proj.x, proj.y, "projectile");
+        sprite.setDepth(8);
+        sprite.setOrigin(0.5, 0.5);
+        if (proj.charged) {
+          sprite.setTint(0xff8800);
+          sprite.setScale(2);
+        }
+        this.serverProjectileSprites.set(proj.id, sprite);
+
+        proj.onChange(() => {
+          const s = this.serverProjectileSprites.get(proj.id);
+          if (s) {
+            s.setPosition(proj.x, proj.y);
+          }
+        });
+      });
+
+      room.state.projectiles.onRemove((proj: any, _key: number) => {
+        const sprite = this.serverProjectileSprites.get(proj.id);
+        if (sprite) {
+          // Impact particles on removal
+          this.particles.impact(proj.x, proj.y, proj.charged ? 0xff8800 : 0xffff00);
+          sprite.destroy();
+          this.serverProjectileSprites.delete(proj.id);
+        }
+      });
+
+      // Combat messages
+      room.onMessage("hit", (data: any) => {
+        // Show damage number at hit location
+        this.events.emit("damage:number", data.x, data.y, data.damage);
+
+        // Impact particles
+        const color = data.type === "charged" ? 0xff8800 : data.type === "melee" ? 0xffffff : 0xffff00;
+        this.particles.impact(data.x, data.y, color);
+
+        // Screen shake if local player was hit
+        if (data.targetId === room.sessionId) {
+          this.screenShake.shake(SHAKE_DAMAGE_MAG, SHAKE_DAMAGE_DURATION);
+        }
+      });
+
+      room.onMessage("melee_hit", (data: any) => {
+        // Show melee impact particles at attacker position
+        this.particles.impact(data.x, data.y, 0xffffff);
+      });
+
+      room.onMessage("kill", (data: any) => {
+        // Death explosion at victim location
+        this.particles.deathExplosion(data.x, data.y);
+        this.events.emit("sfx:death");
+      });
+
+      room.onMessage("respawn", (data: any) => {
+        if (data.sessionId === room.sessionId && this.localPlayer) {
+          // Reset local player
+          this.localPlayer.setPosition(data.x, data.y);
+          this.localPlayer.setAlpha(1);
+          this.velocityX = 0;
+          this.velocityY = 0;
+          this.pendingInputs = [];
+          this.localHealth = MAX_HEALTH;
+        }
+      });
+
+      room.onMessage("projectile_wall", (data: any) => {
+        this.particles.impact(data.x, data.y, data.charged ? 0xff8800 : 0xffff00);
       });
 
       room.onLeave((code: number) => {
@@ -301,10 +432,12 @@ export class GameScene extends Phaser.Scene {
       );
     }
 
-    // Button state: track attack (left mouse)
+    // Button state: track attack (left mouse) and melee (right mouse)
     const leftDown = pointer.leftButtonDown();
+    const rightDown = pointer.rightButtonDown();
     let buttons = 0;
     if (leftDown) buttons |= Button.ATTACK;
+    if (rightDown) buttons |= Button.MELEE;
     this.attackHeld = leftDown;
 
     // Record input to buffer
@@ -327,26 +460,31 @@ export class GameScene extends Phaser.Scene {
       this.stateMachine.setDashAngle(dashAngle);
     }
 
+    // Don't send input or process movement if dead
+    const isDead = this.localHealth <= 0;
+
     // Send input to server
     if (this.network.getRoom()) {
       this.inputSeq++;
       const input: InputPayload = {
         seq: this.inputSeq,
         tick: 0,
-        dx,
-        dy,
+        dx: isDead ? 0 : dx,
+        dy: isDead ? 0 : dy,
         aimAngle,
-        buttons,
+        buttons: isDead ? 0 : buttons,
         dt,
       };
       this.network.sendInput(input);
-      this.pendingInputs.push({ seq: this.inputSeq, dx, dy, dt, vx: this.velocityX, vy: this.velocityY });
+      if (!isDead) {
+        this.pendingInputs.push({ seq: this.inputSeq, dx, dy, dt, vx: this.velocityX, vy: this.velocityY });
+      }
     } else if (this.offlineMode) {
       this.inputSeq++;
     }
 
     // Movement & combat
-    if (this.localPlayer) {
+    if (this.localPlayer && !isDead) {
       if (dashState) {
         // During dash: override movement with dash velocity
         const dashVx = Math.cos(dashState.angle) * dashState.speedPerFrame * 60;
@@ -401,15 +539,35 @@ export class GameScene extends Phaser.Scene {
       );
     }
 
-    // Interpolate remote players
+    // Interpolate remote players + update health bars + rotation + death
     this.remotePlayers.forEach((sprite, sessionId) => {
       const target = this.remoteTargets.get(sessionId);
       if (target) {
         const lerpFactor = 0.15;
         sprite.x = Phaser.Math.Linear(sprite.x, target.x, lerpFactor);
         sprite.y = Phaser.Math.Linear(sprite.y, target.y, lerpFactor);
+        sprite.setRotation(target.angle);
+
+        // Death state: fade out
+        if (target.state === "dead") {
+          sprite.setAlpha(0.3);
+        } else {
+          sprite.setAlpha(1);
+        }
+
+        // Update health bar
+        const hpBar = this.remoteHealthBars.get(sessionId);
+        if (hpBar) {
+          this.drawRemoteHealthBar(hpBar, sprite.x, sprite.y, target.health);
+        }
       }
     });
+
+    // Track server projectile count for debug
+    const room = this.network.getRoom();
+    if (room) {
+      this.serverProjectileCount = (room.state as any)?.projectiles?.length ?? 0;
+    }
 
     // Update combat
     this.combatManager.update(time, delta);
@@ -445,7 +603,29 @@ export class GameScene extends Phaser.Scene {
       inputBufferHistory: this.inputBuffer.getHistory(30),
       pendingInputCount: this.pendingInputs.length,
       artificialLatency: this.network.getArtificialDelay(),
+      localHealth: this.localHealth,
+      localKills: this.localKills,
+      serverProjectileCount: this.serverProjectileCount,
     });
+  }
+
+  private drawRemoteHealthBar(g: Phaser.GameObjects.Graphics, x: number, y: number, health: number) {
+    g.clear();
+
+    const barWidth = 32;
+    const barHeight = 4;
+    const barY = y - PLAYER_RADIUS - 8;
+    const barX = x - barWidth / 2;
+
+    // Background
+    g.fillStyle(0x000000, 0.6);
+    g.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
+
+    // Health fill
+    const ratio = Math.max(0, health / MAX_HEALTH);
+    const color = ratio > 0.5 ? 0x00ff00 : ratio > 0.25 ? 0xffff00 : 0xff0000;
+    g.fillStyle(color, 0.9);
+    g.fillRect(barX, barY, barWidth * ratio, barHeight);
   }
 
   private getHorizontalInput(): number {

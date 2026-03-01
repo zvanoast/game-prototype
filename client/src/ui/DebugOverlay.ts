@@ -18,6 +18,9 @@ export interface DebugData {
   inputBufferHistory?: InputFrame[];
   pendingInputCount?: number;
   artificialLatency?: number;
+  localHealth?: number;
+  localKills?: number;
+  serverProjectileCount?: number;
 }
 
 export class DebugOverlay {
@@ -49,7 +52,7 @@ export class DebugOverlay {
       padding: { x: 4, y: 2 },
     };
 
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < 18; i++) {
       const text = scene.add.text(0, i * 18, "", style);
       this.texts.push(text);
       this.container.add(text);
@@ -96,6 +99,9 @@ export class DebugOverlay {
     const chargeFrames = data.chargeFrames ?? 0;
     const pendingInputs = data.pendingInputCount ?? 0;
     const artLatency = data.artificialLatency ?? 0;
+    const localHealth = data.localHealth ?? 0;
+    const localKills = data.localKills ?? 0;
+    const serverProjCount = data.serverProjectileCount ?? 0;
 
     // Position delta (distance between server-confirmed and local predicted)
     const posDeltaX = this.localPos.x - this.serverPos.x;
@@ -105,17 +111,18 @@ export class DebugOverlay {
     this.texts[0].setText(`[DEBUG OVERLAY]`);
     this.texts[1].setText(`Server Tick: ${this.serverTick}`);
     this.texts[2].setText(`Players: ${this.playerCount}`);
-    this.texts[3].setText(`Local Pos: (${this.localPos.x.toFixed(1)}, ${this.localPos.y.toFixed(1)})`);
-    this.texts[4].setText(`Server Pos: (${this.serverPos.x.toFixed(1)}, ${this.serverPos.y.toFixed(1)})`);
-    this.texts[5].setText(`Prediction Δ: (${posDeltaX.toFixed(1)}, ${posDeltaY.toFixed(1)}) dist: ${posDelta.toFixed(1)}`);
-    this.texts[6].setText(`Pending Inputs: ${pendingInputs}  Art. Latency: ${artLatency}ms [keys 1-5]`);
-    this.texts[7].setText(`Velocity: (${vx.toFixed(0)}, ${vy.toFixed(0)})  Speed: ${speed.toFixed(0)}`);
-    this.texts[8].setText(`Projectiles: ${projCount}`);
-    this.texts[9].setText(`Shoot CD: ${shootCD.toFixed(0)}ms  Melee CD: ${meleeCD.toFixed(0)}ms`);
-    this.texts[10].setText(`Aim: ${Phaser.Math.RadToDeg(aim).toFixed(1)}°`);
-    this.texts[11].setText(`State: ${comboState}`);
-    this.texts[12].setText(`Last Combo: ${lastCombo}  Charge: ${chargeFrames}`);
-    this.texts[13].setText(`Input Buffer (30 frames):`);
+    this.texts[3].setText(`HP: ${localHealth}  Kills: ${localKills}`);
+    this.texts[4].setText(`Local Pos: (${this.localPos.x.toFixed(1)}, ${this.localPos.y.toFixed(1)})`);
+    this.texts[5].setText(`Server Pos: (${this.serverPos.x.toFixed(1)}, ${this.serverPos.y.toFixed(1)})`);
+    this.texts[6].setText(`Prediction Δ: (${posDeltaX.toFixed(1)}, ${posDeltaY.toFixed(1)}) dist: ${posDelta.toFixed(1)}`);
+    this.texts[7].setText(`Pending Inputs: ${pendingInputs}  Art. Latency: ${artLatency}ms [keys 1-5]`);
+    this.texts[8].setText(`Velocity: (${vx.toFixed(0)}, ${vy.toFixed(0)})  Speed: ${speed.toFixed(0)}`);
+    this.texts[9].setText(`Projectiles (local): ${projCount}  (server): ${serverProjCount}`);
+    this.texts[10].setText(`Shoot CD: ${shootCD.toFixed(0)}ms  Melee CD: ${meleeCD.toFixed(0)}ms`);
+    this.texts[11].setText(`Aim: ${Phaser.Math.RadToDeg(aim).toFixed(1)}°`);
+    this.texts[12].setText(`State: ${comboState}`);
+    this.texts[13].setText(`Last Combo: ${lastCombo}  Charge: ${chargeFrames}`);
+    this.texts[14].setText(`Input Buffer (30 frames):`);
 
     // Draw input buffer timeline
     this.drawInputBuffer(data.inputBufferHistory ?? []);
@@ -125,7 +132,7 @@ export class DebugOverlay {
     const g = this.bufferGraphics;
     g.clear();
 
-    const startY = 14 * 18 + 4;
+    const startY = 16 * 18 + 4;
     const cellW = 8;
     const cellH = 20;
     const maxFrames = 30;
