@@ -14,6 +14,11 @@ export class TestDummy extends Phaser.Physics.Arcade.Sprite {
   private spawnY: number;
   private flashTimer = 0;
 
+  // Knockback
+  private knockbackVx = 0;
+  private knockbackVy = 0;
+  private knockbackFramesLeft = 0;
+
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y, "dummy");
     scene.add.existing(this);
@@ -32,7 +37,7 @@ export class TestDummy extends Phaser.Physics.Arcade.Sprite {
     this.drawHealthBar();
   }
 
-  takeDamage(amount: number): number {
+  takeDamage(amount: number, knockbackAngle?: number, knockbackDist?: number): number {
     if (!this.alive) return 0;
 
     const actual = Math.min(this.hp, amount);
@@ -40,10 +45,15 @@ export class TestDummy extends Phaser.Physics.Arcade.Sprite {
 
     // Flash white
     this.setTint(0xffffff);
-    this.flashTimer = 100; // ms
+    this.flashTimer = 100;
 
     // Emit damage number event
     this.scene.events.emit("damage:number", this.x, this.y - 16, actual);
+
+    // Apply knockback
+    if (knockbackAngle !== undefined && knockbackDist !== undefined && knockbackDist > 0) {
+      this.applyKnockback(knockbackAngle, knockbackDist);
+    }
 
     this.drawHealthBar();
 
@@ -54,13 +64,25 @@ export class TestDummy extends Phaser.Physics.Arcade.Sprite {
     return actual;
   }
 
+  private applyKnockback(angle: number, distance: number) {
+    const frames = 10;
+    const perFrame = distance / frames;
+    this.knockbackVx = Math.cos(angle) * perFrame;
+    this.knockbackVy = Math.sin(angle) * perFrame;
+    this.knockbackFramesLeft = frames;
+  }
+
   private die() {
     this.alive = false;
+
+    // Emit death event for particles
+    this.scene.events.emit("dummy:death", this.x, this.y);
+    this.scene.events.emit("sfx:death");
+
     this.setVisible(false);
     (this.body as Phaser.Physics.Arcade.StaticBody).enable = false;
     this.healthBar.setVisible(false);
 
-    // Respawn after delay
     this.scene.time.delayedCall(DUMMY_RESPAWN_TIME_MS, () => {
       this.respawn();
     });
@@ -74,6 +96,7 @@ export class TestDummy extends Phaser.Physics.Arcade.Sprite {
     (this.body as Phaser.Physics.Arcade.StaticBody).enable = true;
     this.healthBar.setVisible(true);
     this.clearTint();
+    this.knockbackFramesLeft = 0;
     this.drawHealthBar();
   }
 
@@ -85,11 +108,9 @@ export class TestDummy extends Phaser.Physics.Arcade.Sprite {
     const barY = this.y + HEALTH_BAR_OFFSET_Y;
     const ratio = this.hp / this.maxHp;
 
-    // Background
     this.healthBar.fillStyle(0x333333, 0.8);
     this.healthBar.fillRect(barX, barY, HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT);
 
-    // Fill (green > yellow > red)
     let color = 0x00ff00;
     if (ratio < 0.3) color = 0xff0000;
     else if (ratio < 0.6) color = 0xffff00;
@@ -110,7 +131,20 @@ export class TestDummy extends Phaser.Physics.Arcade.Sprite {
       }
     }
 
-    // Keep health bar positioned above dummy
+    // Apply knockback movement (manual position update for static bodies)
+    if (this.knockbackFramesLeft > 0) {
+      this.x += this.knockbackVx;
+      this.y += this.knockbackVy;
+      this.knockbackFramesLeft--;
+
+      // Decay
+      this.knockbackVx *= 0.85;
+      this.knockbackVy *= 0.85;
+
+      // Update static body position
+      (this.body as Phaser.Physics.Arcade.StaticBody).updateFromGameObject();
+    }
+
     this.drawHealthBar();
   }
 

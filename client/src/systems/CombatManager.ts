@@ -1,6 +1,16 @@
 import Phaser from "phaser";
 import { DEFAULT_WEAPON } from "../config/weapons";
 import type { TestDummy } from "../entities/TestDummy";
+import {
+  CHARGED_SHOT_SPEED,
+  CHARGED_SHOT_SIZE,
+  CHARGED_SHOT_DAMAGE_MULT,
+  DASH_STRIKE_RANGE_MULT,
+  DASH_STRIKE_DAMAGE_MULT,
+  KNOCKBACK_PROJECTILE,
+  KNOCKBACK_MELEE,
+  KNOCKBACK_CHARGED,
+} from "shared";
 
 export class CombatManager {
   private scene: Phaser.Scene;
@@ -21,6 +31,7 @@ export class CombatManager {
   private meleeArcGraphics!: Phaser.GameObjects.Graphics;
   private meleeArcTimer = 0;
   private meleeArcFrames = 0;
+  private meleeArcRange = DEFAULT_WEAPON.meleeRange;
 
   // Muzzle flash
   private muzzleFlash!: Phaser.GameObjects.Sprite;
@@ -28,6 +39,9 @@ export class CombatManager {
 
   // Aim angle (set externally)
   private aimAngle = 0;
+
+  // Charging visual
+  private chargeGraphics!: Phaser.GameObjects.Graphics;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -54,6 +68,10 @@ export class CombatManager {
     this.meleeArcGraphics.setDepth(10);
     this.meleeArcGraphics.setVisible(false);
 
+    // Charge visual
+    this.chargeGraphics = this.scene.add.graphics();
+    this.chargeGraphics.setDepth(11);
+
     // Muzzle flash sprite
     this.muzzleFlash = this.scene.add.sprite(0, 0, "muzzle_flash");
     this.muzzleFlash.setDepth(15);
@@ -61,17 +79,33 @@ export class CombatManager {
 
     // Collisions: projectiles vs walls
     this.scene.physics.add.collider(this.projectiles, this.wallLayer, (obj1, _obj2) => {
-      // obj1 is the projectile (group member), obj2 is the tile
-      this.destroyProjectile(obj1 as Phaser.Physics.Arcade.Sprite);
+      const proj = obj1 as Phaser.Physics.Arcade.Sprite;
+      this.scene.events.emit("sfx:impact");
+      this.scene.events.emit("particle:impact", proj.x, proj.y, 0xffff00);
+      this.destroyProjectile(proj);
     });
 
     // Collisions: projectiles vs dummies
     for (const dummy of this.dummies) {
       this.scene.physics.add.overlap(this.projectiles, dummy, (obj1, obj2) => {
-        // Phaser may swap arg order — find which one is the projectile
         const proj = (obj1 !== dummy ? obj1 : obj2) as Phaser.Physics.Arcade.Sprite;
+        const damage = proj.getData("damage") ?? DEFAULT_WEAPON.damage;
+        const isCharged = proj.getData("charged") ?? false;
+        const knockback = isCharged ? KNOCKBACK_CHARGED : KNOCKBACK_PROJECTILE;
+        const color = isCharged ? 0xff8800 : 0xffff00;
+
+        // Knockback angle: from player toward dummy
+        const kbAngle = Math.atan2(dummy.y - this.player.y, dummy.x - this.player.x);
+
+        this.scene.events.emit("particle:impact", proj.x, proj.y, color);
+        this.scene.events.emit("sfx:impact");
+
+        if (isCharged) {
+          this.scene.events.emit("juice:charged_hit", this.player, dummy);
+        }
+
         this.destroyProjectile(proj);
-        dummy.takeDamage(DEFAULT_WEAPON.damage);
+        dummy.takeDamage(damage, kbAngle, knockback);
       });
     }
 
@@ -82,16 +116,11 @@ export class CombatManager {
   }
 
   private setupMouseInput() {
-    // Disable right-click context menu on canvas
     this.scene.game.canvas.addEventListener("contextmenu", (e) => {
       e.preventDefault();
     });
 
-    // Left click: shoot
     this.scene.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-      if (pointer.leftButtonDown()) {
-        this.tryShoot();
-      }
       if (pointer.rightButtonDown()) {
         this.tryMelee();
       }
@@ -106,50 +135,105 @@ export class CombatManager {
     return this.aimAngle;
   }
 
-  private tryShoot() {
-    if (!this.initialized) return;
+  /** Normal shot */
+  tryShoot(): boolean {
+    if (!this.initialized) return false;
     const now = this.scene.time.now;
-    if (now - this.lastShootTime < DEFAULT_WEAPON.fireRateMs) return;
+    if (now - this.lastShootTime < DEFAULT_WEAPON.fireRateMs) return false;
     this.lastShootTime = now;
 
-    const speed = DEFAULT_WEAPON.projectileSpeed;
+    this.fireProjectile(
+      DEFAULT_WEAPON.projectileSpeed,
+      DEFAULT_WEAPON.damage,
+      DEFAULT_WEAPON.projectileRadius,
+      DEFAULT_WEAPON.projectileRange,
+      false
+    );
+
+    this.scene.events.emit("sfx:shoot");
+    this.scene.events.emit("juice:shoot", this.aimAngle);
+    return true;
+  }
+
+  /** Charged shot */
+  fireChargedShot() {
+    if (!this.initialized) return;
+    this.lastShootTime = this.scene.time.now;
+
+    this.fireProjectile(
+      CHARGED_SHOT_SPEED,
+      DEFAULT_WEAPON.damage * CHARGED_SHOT_DAMAGE_MULT,
+      CHARGED_SHOT_SIZE / 2,
+      DEFAULT_WEAPON.projectileRange * 1.5,
+      true,
+      0xff8800
+    );
+
+    this.scene.events.emit("sfx:charged_shot");
+    this.scene.events.emit("juice:charged_shot", this.aimAngle);
+  }
+
+  private fireProjectile(
+    speed: number,
+    damage: number,
+    radius: number,
+    range: number,
+    charged: boolean,
+    tint?: number
+  ) {
     const vx = Math.cos(this.aimAngle) * speed;
     const vy = Math.sin(this.aimAngle) * speed;
 
-    // Spawn offset from player center
     const spawnDist = 20;
     const sx = this.player.x + Math.cos(this.aimAngle) * spawnDist;
     const sy = this.player.y + Math.sin(this.aimAngle) * spawnDist;
 
     const proj = this.projectiles.get(sx, sy, "projectile") as Phaser.Physics.Arcade.Sprite | null;
-    if (!proj) return; // pool exhausted
+    if (!proj) return;
 
     proj.setActive(true);
     proj.setVisible(true);
     proj.setPosition(sx, sy);
+    proj.setData("damage", damage);
+    proj.setData("range", range);
+    proj.setData("charged", charged);
+    if (tint) {
+      proj.setTint(tint);
+      proj.setScale(2);
+    } else {
+      proj.clearTint();
+      proj.setScale(1);
+    }
     proj.body!.enable = true;
     (proj.body as Phaser.Physics.Arcade.Body).setVelocity(vx, vy);
-    (proj.body as Phaser.Physics.Arcade.Body).setCircle(DEFAULT_WEAPON.projectileRadius);
+    (proj.body as Phaser.Physics.Arcade.Body).setCircle(radius);
 
-    // Track origin for range check
     this.projectileOrigins.set(proj, { x: sx, y: sy });
 
     // Muzzle flash
     this.muzzleFlash.setPosition(sx, sy);
     this.muzzleFlash.setVisible(true);
-    this.muzzleFlashTimer = 2; // frames
+    this.muzzleFlashTimer = 2;
+
+    // Muzzle particles
+    this.scene.events.emit("particle:muzzle", sx, sy, this.aimAngle);
   }
 
-  private tryMelee() {
+  tryMelee(rangeMult = 1, damageMult = 1, knockbackMult = 1) {
     if (!this.initialized) return;
     const now = this.scene.time.now;
     if (now - this.lastMeleeTime < DEFAULT_WEAPON.meleeCooldownMs) return;
     this.lastMeleeTime = now;
 
     const arcHalf = Phaser.Math.DegToRad(DEFAULT_WEAPON.meleeArcDegrees / 2);
-    const range = DEFAULT_WEAPON.meleeRange;
+    const range = DEFAULT_WEAPON.meleeRange * rangeMult;
+    const damage = DEFAULT_WEAPON.meleeDamage * damageMult;
+    const knockback = KNOCKBACK_MELEE * knockbackMult;
 
-    // Check each dummy
+    this.scene.events.emit("sfx:melee_swing");
+
+    let hitSomething = false;
+
     for (const dummy of this.dummies) {
       if (!dummy.isAlive()) continue;
 
@@ -159,26 +243,43 @@ export class CombatManager {
 
       if (dist > range) continue;
 
-      // Angle check
       const angleToDummy = Math.atan2(dy, dx);
       let angleDiff = angleToDummy - this.aimAngle;
-      // Normalize to [-PI, PI]
       while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
       while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
 
       if (Math.abs(angleDiff) <= arcHalf) {
-        dummy.takeDamage(DEFAULT_WEAPON.meleeDamage);
+        const kbAngle = Math.atan2(dy, dx);
+        dummy.takeDamage(damage, kbAngle, knockback);
+        hitSomething = true;
+
+        this.scene.events.emit("particle:impact", dummy.x, dummy.y, 0xffffff);
       }
+    }
+
+    if (hitSomething) {
+      this.scene.events.emit("sfx:melee_hit");
+      this.scene.events.emit("juice:melee_hit", this.player, this.dummies);
     }
 
     // Show melee arc visual
     this.meleeArcFrames = DEFAULT_WEAPON.meleeActiveFrames;
     this.meleeArcTimer = this.meleeArcFrames;
+    this.meleeArcRange = range;
+  }
+
+  /** Dash strike: 2x range, 2x damage melee */
+  executeDashStrike() {
+    this.lastMeleeTime = 0; // bypass cooldown
+    this.scene.events.emit("sfx:dash_strike");
+    this.tryMelee(DASH_STRIKE_RANGE_MULT, DASH_STRIKE_DAMAGE_MULT, DASH_STRIKE_DAMAGE_MULT);
   }
 
   private destroyProjectile(proj: Phaser.Physics.Arcade.Sprite) {
     proj.setActive(false);
     proj.setVisible(false);
+    proj.clearTint();
+    proj.setScale(1);
     if (proj.body) {
       proj.body.enable = false;
       if ("setVelocity" in proj.body) {
@@ -186,6 +287,25 @@ export class CombatManager {
       }
     }
     this.projectileOrigins.delete(proj);
+  }
+
+  updateChargeVisual(isCharging: boolean, chargeFrames: number, minFrames: number) {
+    this.chargeGraphics.clear();
+    if (!this.initialized || !isCharging || chargeFrames < 5) return;
+
+    const progress = Math.min(chargeFrames / minFrames, 1);
+    const radius = 20 + progress * 10;
+    const alpha = 0.2 + progress * 0.4;
+    const color = progress >= 1 ? 0xff8800 : 0xffff00;
+
+    this.chargeGraphics.lineStyle(2, color, alpha);
+    this.chargeGraphics.strokeCircle(this.player.x, this.player.y, radius);
+
+    if (progress >= 1) {
+      const pulse = Math.sin(this.scene.time.now / 80) * 0.15 + 0.35;
+      this.chargeGraphics.fillStyle(color, pulse);
+      this.chargeGraphics.fillCircle(this.player.x, this.player.y, radius - 2);
+    }
   }
 
   update(_time: number, _delta: number) {
@@ -201,7 +321,8 @@ export class CombatManager {
         const dx = proj.x - origin.x;
         const dy = proj.y - origin.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist >= DEFAULT_WEAPON.projectileRange) {
+        const range = proj.getData("range") ?? DEFAULT_WEAPON.projectileRange;
+        if (dist >= range) {
           this.destroyProjectile(proj);
         }
       }
@@ -227,12 +348,11 @@ export class CombatManager {
 
   private drawMeleeArc() {
     const arcHalf = Phaser.Math.DegToRad(DEFAULT_WEAPON.meleeArcDegrees / 2);
-    const range = DEFAULT_WEAPON.meleeRange;
+    const range = this.meleeArcRange;
 
     this.meleeArcGraphics.clear();
     this.meleeArcGraphics.setVisible(true);
 
-    // Semi-transparent arc
     this.meleeArcGraphics.fillStyle(0xffffff, 0.2);
     this.meleeArcGraphics.lineStyle(2, 0xffffff, 0.5);
 
@@ -251,7 +371,6 @@ export class CombatManager {
     this.meleeArcGraphics.strokePath();
   }
 
-  /** Number of active projectiles (for debug overlay) */
   getActiveProjectileCount(): number {
     if (!this.initialized) return 0;
     let count = 0;

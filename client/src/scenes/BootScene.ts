@@ -81,6 +81,13 @@ export class BootScene extends Phaser.Scene {
     flashGfx.generateTexture("muzzle_flash", 12, 12);
     flashGfx.destroy();
 
+    // --- Particle sprite: 4x4 white circle (tinted per-effect) ---
+    const particleGfx = this.add.graphics();
+    particleGfx.fillStyle(0xffffff, 1);
+    particleGfx.fillCircle(2, 2, 2);
+    particleGfx.generateTexture("particle", 4, 4);
+    particleGfx.destroy();
+
     console.log("BootScene: placeholder assets generated");
     this.scene.start("GameScene");
   }

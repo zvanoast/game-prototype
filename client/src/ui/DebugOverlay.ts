@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import type { Room } from "colyseus.js";
+import type { InputFrame } from "../systems/InputBuffer";
 
 export interface DebugData {
   room: Room | null;
@@ -11,6 +12,10 @@ export interface DebugData {
   shootCooldown?: number;
   meleeCooldown?: number;
   aimAngle?: number;
+  comboState?: string;
+  lastCombo?: string | null;
+  chargeFrames?: number;
+  inputBufferHistory?: InputFrame[];
 }
 
 export class DebugOverlay {
@@ -18,6 +23,9 @@ export class DebugOverlay {
   private texts: Phaser.GameObjects.Text[] = [];
   private visible = false;
   private container: Phaser.GameObjects.Container;
+
+  // Input buffer visual
+  private bufferGraphics: Phaser.GameObjects.Graphics;
 
   // Data to display
   private serverTick = 0;
@@ -28,10 +36,9 @@ export class DebugOverlay {
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     this.container = scene.add.container(10, 10);
-    this.container.setScrollFactor(0); // fixed to camera
+    this.container.setScrollFactor(0);
     this.container.setDepth(1000);
 
-    // Create text lines
     const style: Phaser.Types.GameObjects.Text.TextStyle = {
       fontSize: "12px",
       fontFamily: "monospace",
@@ -40,15 +47,20 @@ export class DebugOverlay {
       padding: { x: 4, y: 2 },
     };
 
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 13; i++) {
       const text = scene.add.text(0, i * 18, "", style);
       this.texts.push(text);
       this.container.add(text);
     }
 
+    // Input buffer visualization (below text)
+    this.bufferGraphics = scene.add.graphics();
+    this.bufferGraphics.setScrollFactor(0);
+    this.bufferGraphics.setDepth(1000);
+    this.container.add(this.bufferGraphics);
+
     this.container.setVisible(false);
 
-    // Toggle with backtick
     scene.input.keyboard!.on("keydown-BACKQUOTE", () => {
       this.visible = !this.visible;
       this.container.setVisible(this.visible);
@@ -77,6 +89,9 @@ export class DebugOverlay {
     const shootCD = data.shootCooldown ?? 0;
     const meleeCD = data.meleeCooldown ?? 0;
     const aim = data.aimAngle ?? 0;
+    const comboState = data.comboState ?? "?";
+    const lastCombo = data.lastCombo ?? "none";
+    const chargeFrames = data.chargeFrames ?? 0;
 
     this.texts[0].setText(`[DEBUG OVERLAY]`);
     this.texts[1].setText(`Server Tick: ${this.serverTick}`);
@@ -88,6 +103,54 @@ export class DebugOverlay {
     this.texts[7].setText(`Projectiles: ${projCount}`);
     this.texts[8].setText(`Shoot CD: ${shootCD.toFixed(0)}ms  Melee CD: ${meleeCD.toFixed(0)}ms`);
     this.texts[9].setText(`Aim: ${Phaser.Math.RadToDeg(aim).toFixed(1)}°`);
+    this.texts[10].setText(`State: ${comboState}`);
+    this.texts[11].setText(`Last Combo: ${lastCombo}  Charge: ${chargeFrames}`);
+    this.texts[12].setText(`Input Buffer (30 frames):`);
+
+    // Draw input buffer timeline
+    this.drawInputBuffer(data.inputBufferHistory ?? []);
+  }
+
+  private drawInputBuffer(history: InputFrame[]) {
+    const g = this.bufferGraphics;
+    g.clear();
+
+    const startY = 13 * 18 + 4;
+    const cellW = 8;
+    const cellH = 20;
+    const maxFrames = 30;
+
+    // Background
+    g.fillStyle(0x000000, 0.6);
+    g.fillRect(0, startY, cellW * maxFrames, cellH);
+
+    // Draw each frame (history is newest-first, we draw left=oldest right=newest)
+    for (let i = 0; i < Math.min(history.length, maxFrames); i++) {
+      const frame = history[history.length - 1 - i]; // oldest first for drawing
+      if (!frame) continue;
+
+      const x = i * cellW;
+
+      // Movement indicator (direction)
+      if (frame.dx !== 0 || frame.dy !== 0) {
+        g.fillStyle(0x00ff88, 0.8);
+        g.fillRect(x + 1, startY + 1, cellW - 2, cellH / 2 - 1);
+      }
+
+      // Button indicator (attack)
+      if (frame.buttons & 1) { // Button.ATTACK
+        g.fillStyle(0xff4444, 0.8);
+        g.fillRect(x + 1, startY + cellH / 2, cellW - 2, cellH / 2 - 1);
+      }
+
+      // Frame separator
+      g.lineStyle(1, 0x333333, 0.3);
+      g.lineBetween(x, startY, x, startY + cellH);
+    }
+
+    // Border
+    g.lineStyle(1, 0x555555, 0.8);
+    g.strokeRect(0, startY, cellW * maxFrames, cellH);
   }
 
   setServerPos(x: number, y: number) {

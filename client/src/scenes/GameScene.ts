@@ -5,6 +5,13 @@ import { Minimap } from "../ui/Minimap";
 import { DamageNumberManager } from "../ui/DamageNumber";
 import { TilemapManager } from "../world/TilemapManager";
 import { CombatManager } from "../systems/CombatManager";
+import { InputBuffer } from "../systems/InputBuffer";
+import { ComboDetector } from "../systems/ComboDetector";
+import { CombatStateMachine } from "../systems/CombatStateMachine";
+import { ScreenShake } from "../systems/ScreenShake";
+import { HitStop } from "../systems/HitStop";
+import { ParticleManager } from "../systems/ParticleManager";
+import { SoundManager } from "../systems/SoundManager";
 import { TestDummy, DUMMY_SPAWN_POSITIONS } from "../entities/TestDummy";
 import {
   ARENA_WIDTH,
@@ -13,7 +20,17 @@ import {
   PLAYER_RADIUS,
   PLAYER_ACCELERATION,
   PLAYER_FRICTION,
+  CHARGED_SHOT_MIN_FRAMES,
+  SHAKE_SHOOT_MAG,
+  SHAKE_SHOOT_DURATION,
+  SHAKE_MELEE_HIT_MAG,
+  SHAKE_MELEE_HIT_DURATION,
+  SHAKE_CHARGED_SHOT_MAG,
+  SHAKE_CHARGED_SHOT_DURATION,
+  HITSTOP_MELEE_MS,
+  HITSTOP_CHARGED_MS,
 } from "shared";
+import { Button } from "shared";
 import type { InputPayload } from "shared";
 
 interface PendingInput {
@@ -30,6 +47,13 @@ export class GameScene extends Phaser.Scene {
   private tilemapManager!: TilemapManager;
   private combatManager!: CombatManager;
   private damageNumbers!: DamageNumberManager;
+  private inputBuffer!: InputBuffer;
+  private comboDetector!: ComboDetector;
+  private stateMachine!: CombatStateMachine;
+  private screenShake!: ScreenShake;
+  private hitStop!: HitStop;
+  private particles!: ParticleManager;
+  private soundManager!: SoundManager;
 
   // Input
   private keys!: {
@@ -50,6 +74,9 @@ export class GameScene extends Phaser.Scene {
   private velocityX = 0;
   private velocityY = 0;
   private offlineMode = false;
+
+  // Button state tracking
+  private attackHeld = false;
 
   // Remote players
   private remotePlayers = new Map<string, Phaser.GameObjects.Sprite>();
@@ -87,6 +114,18 @@ export class GameScene extends Phaser.Scene {
       this.dummies.push(dummy);
     }
 
+    // Input buffer & combo system
+    this.inputBuffer = new InputBuffer();
+    this.comboDetector = new ComboDetector(this, this.inputBuffer);
+    this.stateMachine = new CombatStateMachine(this);
+
+    // Juice systems
+    this.screenShake = new ScreenShake(this);
+    this.hitStop = new HitStop(this);
+    this.particles = new ParticleManager(this);
+    this.soundManager = new SoundManager(this);
+    this.setupJuiceListeners();
+
     // Debug overlay
     this.debugOverlay = new DebugOverlay(this);
 
@@ -112,7 +151,7 @@ export class GameScene extends Phaser.Scene {
     // Circular physics body
     const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
     body.setCircle(PLAYER_RADIUS, 0, 0);
-    body.setCollideWorldBounds(false); // tilemap walls handle boundaries
+    body.setCollideWorldBounds(false);
 
     // Wall collision
     this.physics.add.collider(this.localPlayer, this.tilemapManager.getWallLayer());
@@ -127,20 +166,73 @@ export class GameScene extends Phaser.Scene {
       this.tilemapManager.getWallLayer(),
       this.dummies
     );
+
+    // Wire state machine callbacks
+    this.stateMachine.setCallbacks({
+      onDash: (_angle: number, _speed: number) => {
+        // Dash movement is handled in update() via dashState
+      },
+      onDashStrike: () => {
+        this.combatManager.executeDashStrike();
+      },
+      onChargedShot: () => {
+        this.combatManager.fireChargedShot();
+      },
+    });
+  }
+
+  private setupJuiceListeners() {
+    // Screen shake on shoot
+    this.events.on("juice:shoot", (_angle: number) => {
+      this.screenShake.shake(SHAKE_SHOOT_MAG, SHAKE_SHOOT_DURATION);
+    });
+
+    // Screen shake + hit-stop on charged shot fire
+    this.events.on("juice:charged_shot", (_angle: number) => {
+      this.screenShake.shake(SHAKE_CHARGED_SHOT_MAG, SHAKE_CHARGED_SHOT_DURATION);
+    });
+
+    // Hit-stop + shake on charged projectile hit
+    this.events.on("juice:charged_hit", (attacker: Phaser.GameObjects.Sprite, target: Phaser.GameObjects.Sprite) => {
+      this.screenShake.shake(SHAKE_CHARGED_SHOT_MAG, SHAKE_CHARGED_SHOT_DURATION);
+      this.hitStop.freeze(HITSTOP_CHARGED_MS, [attacker, target]);
+    });
+
+    // Screen shake + hit-stop on melee hit
+    this.events.on("juice:melee_hit", (attacker: Phaser.GameObjects.Sprite, targets: Phaser.GameObjects.Sprite[]) => {
+      this.screenShake.shake(SHAKE_MELEE_HIT_MAG, SHAKE_MELEE_HIT_DURATION);
+      this.hitStop.freeze(HITSTOP_MELEE_MS, [attacker, ...targets]);
+    });
+
+    // Particle events
+    this.events.on("particle:muzzle", (x: number, y: number, angle: number) => {
+      this.particles.muzzleFlash(x, y, angle);
+    });
+
+    this.events.on("particle:impact", (x: number, y: number, color: number) => {
+      this.particles.impact(x, y, color);
+    });
+
+    // Death particles
+    this.events.on("dummy:death", (x: number, y: number) => {
+      this.particles.deathExplosion(x, y);
+    });
+
+    // Dash event
+    this.events.on("state:dash_start", () => {
+      this.events.emit("sfx:dash");
+    });
   }
 
   private async connectToServer() {
     try {
       const room = await this.network.connect();
 
-      // Listen for state changes to sync players
       room.state.players.onAdd((player: any, sessionId: string) => {
         if (sessionId === room.sessionId) {
-          // Local player
           this.spawnLocalPlayer(player.x, player.y);
           console.log("Local player spawned");
         } else {
-          // Remote player
           const sprite = this.add.sprite(player.x, player.y, "player_remote");
           sprite.setOrigin(0.5, 0.5);
           sprite.setDepth(9);
@@ -149,7 +241,6 @@ export class GameScene extends Phaser.Scene {
           console.log(`Remote player joined: ${sessionId}`);
         }
 
-        // Listen for changes to this player's properties
         player.onChange(() => {
           if (sessionId === room.sessionId) {
             this.reconcile(player);
@@ -175,7 +266,6 @@ export class GameScene extends Phaser.Scene {
     } catch (err) {
       console.warn("Connection failed, starting in offline mode:", err);
       this.offlineMode = true;
-      // Spawn player locally in center of map
       this.spawnLocalPlayer(ARENA_WIDTH / 2, ARENA_HEIGHT / 2);
     }
   }
@@ -183,7 +273,7 @@ export class GameScene extends Phaser.Scene {
   update(time: number, delta: number) {
     const dt = delta / 1000;
 
-    // Read input
+    // Read movement input
     const dx = this.getHorizontalInput();
     const dy = this.getVerticalInput();
 
@@ -198,7 +288,33 @@ export class GameScene extends Phaser.Scene {
       );
     }
 
-    // Send input to server (if connected)
+    // Button state: track attack (left mouse)
+    const leftDown = pointer.leftButtonDown();
+    let buttons = 0;
+    if (leftDown) buttons |= Button.ATTACK;
+    this.attackHeld = leftDown;
+
+    // Record input to buffer
+    this.inputBuffer.recordFrame(dx, dy, buttons, aimAngle);
+
+    // Run combo detection
+    this.comboDetector.update();
+
+    // Update state machine charging tracker
+    this.stateMachine.updateCharging(this.attackHeld);
+
+    // Update state machine (tick timers, return dash state if dashing)
+    const dashState = this.stateMachine.update();
+
+    // Set dash direction based on movement input or aim angle
+    if (this.stateMachine.isDashing()) {
+      const dashAngle = (dx !== 0 || dy !== 0)
+        ? Math.atan2(dy, dx)
+        : aimAngle;
+      this.stateMachine.setDashAngle(dashAngle);
+    }
+
+    // Send input to server
     if (this.network.getRoom()) {
       this.inputSeq++;
       const input: InputPayload = {
@@ -207,24 +323,63 @@ export class GameScene extends Phaser.Scene {
         dx,
         dy,
         aimAngle,
-        buttons: 0,
+        buttons,
       };
       this.network.sendInput(input);
       this.pendingInputs.push({ seq: this.inputSeq, dx, dy, dt });
     } else if (this.offlineMode) {
-      // Offline: just track seq for consistency
       this.inputSeq++;
     }
 
-    // Client-side prediction: move local player with acceleration
+    // Movement & combat
     if (this.localPlayer) {
-      this.applyMovementWithAcceleration(dx, dy, dt);
+      if (dashState) {
+        // During dash: override movement with dash velocity
+        const dashVx = Math.cos(dashState.angle) * dashState.speedPerFrame * 60; // convert per-frame to per-second for physics
+        const dashVy = Math.sin(dashState.angle) * dashState.speedPerFrame * 60;
+        const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
+        body.setVelocity(dashVx, dashVy);
+        this.velocityX = dashVx;
+        this.velocityY = dashVy;
+
+        // Make player semi-transparent during dash (invulnerability indicator)
+        this.localPlayer.setAlpha(0.5);
+
+        // Dash trail particles
+        this.particles.dashTrail(this.localPlayer.x, this.localPlayer.y);
+      } else {
+        // Normal acceleration movement (blocked during state lock except dash)
+        if (!this.stateMachine.isLocked()) {
+          this.applyMovementWithAcceleration(dx, dy, dt);
+          this.stateMachine.setMoving(dx !== 0 || dy !== 0);
+        } else {
+          // Locked states (combo_executing, etc.) — slow down
+          this.applyMovementWithAcceleration(0, 0, dt);
+        }
+        this.localPlayer.setAlpha(1);
+      }
 
       // Rotate player toward mouse
       this.localPlayer.setRotation(aimAngle);
 
-      // Update combat aim
+      // Combat aim
       this.combatManager.setAimAngle(aimAngle);
+
+      // Shoot on left click (only if not charging and state allows)
+      if (leftDown && this.stateMachine.canShoot() && !this.stateMachine.isCharging()) {
+        // Only fire on the frame the button goes down (not held)
+        // Normal shots fire on press; charging is handled by combo system
+        if (this.stateMachine.getChargeFrames() <= 1) {
+          this.combatManager.tryShoot();
+        }
+      }
+
+      // Update charge visual
+      this.combatManager.updateChargeVisual(
+        this.stateMachine.isCharging(),
+        this.stateMachine.getChargeFrames(),
+        CHARGED_SHOT_MIN_FRAMES
+      );
     }
 
     // Interpolate remote players
@@ -262,6 +417,10 @@ export class GameScene extends Phaser.Scene {
       shootCooldown: this.combatManager.getShootCooldownRemaining(),
       meleeCooldown: this.combatManager.getMeleeCooldownRemaining(),
       aimAngle,
+      comboState: this.stateMachine.getState(),
+      lastCombo: this.comboDetector.getLastDetected(),
+      chargeFrames: this.stateMachine.getChargeFrames(),
+      inputBufferHistory: this.inputBuffer.getHistory(30),
     });
   }
 
@@ -282,7 +441,6 @@ export class GameScene extends Phaser.Scene {
   private applyMovementWithAcceleration(dx: number, dy: number, dt: number) {
     if (!this.localPlayer) return;
 
-    // Normalize diagonal input
     let ix = dx;
     let iy = dy;
     const mag = Math.sqrt(ix * ix + iy * iy);
@@ -292,11 +450,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (mag > 0) {
-      // Accelerate toward input direction
       this.velocityX += ix * PLAYER_ACCELERATION * dt;
       this.velocityY += iy * PLAYER_ACCELERATION * dt;
     } else {
-      // Apply friction (decelerate toward zero)
       const speed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
       if (speed > 0) {
         const frictionAmount = PLAYER_FRICTION * dt;
@@ -311,7 +467,6 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Clamp to max speed
     const currentSpeed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
     if (currentSpeed > PLAYER_SPEED) {
       const scale = PLAYER_SPEED / currentSpeed;
@@ -319,7 +474,6 @@ export class GameScene extends Phaser.Scene {
       this.velocityY *= scale;
     }
 
-    // Apply velocity via Arcade physics body
     const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
     body.setVelocity(this.velocityX, this.velocityY);
   }
@@ -331,23 +485,19 @@ export class GameScene extends Phaser.Scene {
 
     const lastProcessed = serverPlayer.lastProcessedInput;
 
-    // Drop processed inputs
     this.pendingInputs = this.pendingInputs.filter(
       (input) => input.seq > lastProcessed
     );
 
-    // Reset to server state
     const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
     body.reset(serverPlayer.x, serverPlayer.y);
     this.velocityX = 0;
     this.velocityY = 0;
 
-    // Replay pending inputs with acceleration math (skip wall collision — acceptable approximation)
     for (const input of this.pendingInputs) {
       this.replayInput(input);
     }
 
-    // Set final velocity on body
     body.setVelocity(this.velocityX, this.velocityY);
   }
 
@@ -380,7 +530,6 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Clamp to max speed
     const currentSpeed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
     if (currentSpeed > PLAYER_SPEED) {
       const scale = PLAYER_SPEED / currentSpeed;
@@ -388,11 +537,9 @@ export class GameScene extends Phaser.Scene {
       this.velocityY *= scale;
     }
 
-    // Apply position (manual, no wall collision during replay)
     this.localPlayer.x += this.velocityX * input.dt;
     this.localPlayer.y += this.velocityY * input.dt;
 
-    // Clamp to arena bounds
     this.localPlayer.x = Phaser.Math.Clamp(this.localPlayer.x, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
     this.localPlayer.y = Phaser.Math.Clamp(this.localPlayer.y, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
   }

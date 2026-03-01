@@ -21,4 +21,22 @@
 - Debug overlay extended: velocity, speed, projectile count, cooldowns, aim angle
 - WeaponConfig system (shared types, server + client mirrors)
 
-## Phase 2: TBD
+## Phase 2: Input Combo System — COMPLETE
+
+### Session 2A: Input Buffer and State Machine
+- InputBuffer: circular buffer (30 frames) with direction, buttons, aimAngle, press/release tracking
+- ComboDetector: scans buffer against shared combo definitions, direction variants, per-combo cooldowns
+- CombatStateMachine: states (idle, moving, attacking, dashing, combo_executing, stunned) with transitions
+- 3 combos: Dash (double-tap direction, 150px/10 frames), Charged Shot (hold 20+ frames, 3x damage), Dash Strike (dash + melee, 2x range/damage)
+- Charging visual: pulsing ring around player that changes color when fully charged
+- Debug overlay: state machine state, last combo, charge frames, input buffer timeline
+
+### Session 2B: Juice and Feel
+- ScreenShake: omnidirectional + directional, configurable magnitude/duration per event
+- HitStop: freeze frames on melee hit (50ms) and charged shot hit (83ms), sprites flash white
+- ParticleManager: muzzle flash (5 yellow), impact (8 color-matched), dash trail (green), death explosion (20 red), charged impact (12 orange)
+- Knockback: projectile (30px), melee (60px), charged shot (100px), decays over 10 frames
+- SoundManager: placeholder console.log for all combat events (shoot, melee, dash, death, etc.)
+- All juice events wired via Phaser event system for decoupled architecture
+
+## Phase 3: TBD

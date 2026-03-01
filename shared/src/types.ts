@@ -39,12 +39,14 @@ export enum Direction {
 }
 
 export enum PlayerState {
-  Idle      = "idle",
-  Moving    = "moving",
-  Attacking = "attacking",
-  Dashing   = "dashing",
-  Stunned   = "stunned",
-  Dead      = "dead",
+  Idle            = "idle",
+  Moving          = "moving",
+  Attacking       = "attacking",
+  Melee           = "melee",
+  Dashing         = "dashing",
+  ComboExecuting  = "combo_executing",
+  Stunned         = "stunned",
+  Dead            = "dead",
 }
 
 export enum ActionType {

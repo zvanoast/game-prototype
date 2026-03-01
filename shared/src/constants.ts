@@ -32,11 +32,45 @@ export const MELEE_ACTIVE_FRAMES = 6;      // frames the hitbox is active
 export const DUMMY_COUNT = 5;
 export const DUMMY_RESPAWN_TIME_MS = 2000;
 
+// --- Dash ---
+export const DASH_DISTANCE = 150;                // pixels traveled during dash
+export const DASH_DURATION_FRAMES = 10;          // frames the dash lasts
+export const DASH_COOLDOWN_TICKS = 10;           // ticks before dash can be used again
+
+// --- Charged Shot ---
+export const CHARGED_SHOT_SPEED = 900;           // pixels per second
+export const CHARGED_SHOT_SIZE = 8;              // projectile size (px)
+export const CHARGED_SHOT_DAMAGE_MULT = 3;       // damage multiplier vs normal shot
+
+// --- Dash Strike ---
+export const DASH_STRIKE_RANGE_MULT = 2;         // melee range multiplier
+export const DASH_STRIKE_DAMAGE_MULT = 2;        // melee damage multiplier
+
 // --- Input / Combo Timing ---
-export const INPUT_BUFFER_SIZE = 60;             // frames stored
-export const COMBO_WINDOW_FRAMES = 20;           // max frames between combo steps
+export const INPUT_BUFFER_SIZE = 30;             // frames stored (for combo detection)
+export const COMBO_WINDOW_FRAMES = 15;           // max frames between combo steps (double-tap window)
 export const CHARGED_SHOT_MIN_FRAMES = 20;       // hold attack this long to charge
 export const DASH_STRIKE_WINDOW_FRAMES = 10;     // attack within this many frames after dash
+
+// --- Screen Shake ---
+export const SHAKE_SHOOT_MAG = 1;            // pixels
+export const SHAKE_SHOOT_DURATION = 50;      // ms
+export const SHAKE_MELEE_HIT_MAG = 3;
+export const SHAKE_MELEE_HIT_DURATION = 100;
+export const SHAKE_CHARGED_SHOT_MAG = 5;
+export const SHAKE_CHARGED_SHOT_DURATION = 150;
+export const SHAKE_DAMAGE_MAG = 4;
+export const SHAKE_DAMAGE_DURATION = 120;
+
+// --- Hit-Stop (Freeze Frames) ---
+export const HITSTOP_MELEE_MS = 50;          // 3 frames at 60fps
+export const HITSTOP_CHARGED_MS = 83;        // 5 frames at 60fps
+
+// --- Knockback ---
+export const KNOCKBACK_PROJECTILE = 30;      // pixels
+export const KNOCKBACK_MELEE = 60;
+export const KNOCKBACK_CHARGED = 100;
+export const KNOCKBACK_DECAY_FRAMES = 10;
 
 // --- Network ---
 export const SERVER_PORT = 3001;
