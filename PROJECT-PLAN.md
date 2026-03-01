@@ -1,4 +1,4 @@
-# Project Plan — Battle Royale 2D Technical Prototype
+# Project Plan — Storage Wars Technical Prototype
 
 ## Phase Summary
 
@@ -8,8 +8,8 @@
 | 1 | Single Player Movement & Combat | 2-3 | Shooting, melee, tilemap arena |
 | 2 | Input Combo System | 2-3 | Tech moves, state machine, juice |
 | 3 | Multiplayer Foundation | 3-4 | Authoritative netcode, prediction, interpolation |
-| 4 | Networked Combat | 2-3 | Server-validated damage, health, death |
-| 5 | Battle Royale Loop | 2-3 | Shrinking zone, loot, match lifecycle |
+| 4 | Storage Wars — Loot & Weapons | 1-2 | 7 weapons, lockers, pickups, equipment slots |
+| 5 | Game Loop | 2-3 | Match lifecycle, lobby, elimination, win condition |
 | 6 | Polish & Hosting | Ongoing | Art pass, sound, deploy to your website |
 
 ---
@@ -254,154 +254,79 @@ Add robustness and a basic lobby flow:
 
 ---
 
-## Phase 4 — Networked Combat
+## Phase 4 — Storage Wars: Loot & Weapons (COMPLETE)
 
-### Session 4A: Server-Side Combat
+Implemented as part of the "Storage Wars" theme. See `claude-progress.md` for details.
 
-```
-Move all combat resolution to the server:
-
-1. Server-side projectile system:
-   - When the server processes an "attack" input, it creates a ProjectileSchema
-     in the game state (position, velocity, ownerId, damage, createdAt).
-   - The server tick loop moves all projectiles and checks collisions against
-     walls (destroy projectile) and players (apply damage, destroy projectile).
-   - Projectiles are added to an ArraySchema on GameStateSchema so clients
-     receive them via state sync.
-
-2. Server-side melee:
-   - When the server processes a "melee" input, it checks a hitbox arc
-     in front of the attacking player.
-   - If any other players are within the arc, apply damage.
-   - Send a "melee_hit" event message to the attacker and victim(s) so
-     clients can play effects.
-
-3. Server-side combo validation:
-   - When a client claims to have executed a combo (sends a "combo" action message),
-     the server validates it by checking the player's recent input history.
-   - The server maintains its own input buffer per player (last 30 inputs received).
-   - If the combo is valid, execute the combo effect server-side.
-   - If invalid, ignore the message (possible cheat attempt).
-
-4. Health and damage:
-   - PlayerSchema tracks health (starts at MAX_HEALTH from constants).
-   - Damage reduces health. Health cannot go below 0.
-   - When health reaches 0, set player state to "dead".
-   - Dead players cannot move or attack.
-   - For prototype: respawn after 3 seconds at a random position with full health.
-
-5. Client-side hit effects:
-   - When the client receives damage events from the server, trigger the
-     juice effects from Phase 2 (screen shake, hit-stop, particles, knockback).
-   - Show a damage direction indicator (brief red arc on screen edge pointing
-     toward the attacker).
-```
-
-### Session 4B: HUD and Kill Feed
-
-```
-Add gameplay UI elements:
-
-1. Health bar:
-   - Show the local player's health as a bar above their sprite.
-   - Bar is green > 60%, yellow 30-60%, red < 30%.
-   - Smooth interpolation when health changes (don't snap).
-   - Also show all other players' health bars (smaller, simpler).
-
-2. Kill feed:
-   - Top-right corner of screen.
-   - Shows recent kills: "PlayerA eliminated PlayerB" with a weapon icon.
-   - Each entry fades out after 5 seconds.
-   - Maximum 5 visible entries.
-   - Server sends "kill" event messages with attacker, victim, and weapon type.
-
-3. Player count:
-   - Show "Players: X/16" or "Alive: X" in the top-left.
-
-4. Ammo / cooldown indicators:
-   - Show weapon cooldown as a small circular cooldown indicator near the
-     crosshair or player sprite.
-   - Show charged shot progress (if holding attack) as a fill bar.
-
-5. Crosshair:
-   - Hide the default mouse cursor when the game canvas has focus.
-   - Show a custom crosshair sprite that follows the mouse position.
-   - Crosshair expands briefly when firing (returns to normal over 100ms).
-```
+- 7 weapons: Fists (default) + 3 melee (Hammer, Lamp, Frying Pan) + 3 ranged (Darts, Plates, Staple Gun)
+- Two equipment slots: melee + ranged. Players start with Fists, empty ranged.
+- 18 storage lockers scattered near obstacles. Press E to open → weapon drops as pickup.
+- Pickups auto-collected on walk-over. Old weapon drops behind player with 1s immunity.
+- Weapons lost on death, dropped as pickups at death location.
+- Shared weapon registry (`shared/src/weapons.ts`) replaces duplicated configs.
+- Server CombatSystem uses per-player weapon configs for all damage/cooldown/range.
 
 ---
 
-## Phase 5 — Battle Royale Loop
+## Phase 5 — Game Loop
 
-### Session 5A: Zone and Match Lifecycle
+### Session 5A: Match Lifecycle and Elimination
 
 ```
-Implement the core battle royale mechanics:
+Implement match flow for last-man-standing elimination (no shrinking zone):
 
 1. Match lifecycle on the server:
-   - Phases: "lobby" → "countdown" → "playing" → "ended"
-   - Lobby: wait for 2+ players (lower threshold for testing). Show a countdown
-     timer that starts when minimum players are reached. 10 second countdown.
-   - Countdown: 3-2-1-GO sequence. Players are frozen during countdown.
-   - Playing: game is active. Zone starts shrinking.
+   - Phases: "waiting" → "countdown" → "playing" → "ended"
+   - Waiting: accept players until minimum (2+). Show "Waiting for players..." on client.
+   - Countdown: once minimum reached, 5 second countdown. Players can move but not attack.
+   - Playing: combat enabled. No respawning — dead players are eliminated.
    - Ended: when 1 player remains (or 0 if last two kill each other).
-     Show winner. After 5 seconds, return all players to lobby.
+     Broadcast winner. After 5 seconds, reset room for next match.
 
-2. Shrinking zone:
-   - The zone is a circle defined by centerX, centerY, currentRadius.
-   - Stored in ZoneState schema so all clients receive it.
-   - The zone shrinks in stages:
-     Stage 1: starts at full arena size, shrinks to 75% over 60 seconds.
-     Stage 2: pause 15 seconds, then shrink to 50% over 45 seconds.
-     Stage 3: pause 10 seconds, then shrink to 25% over 30 seconds.
-     Stage 4: pause 5 seconds, then shrink to a tiny circle over 20 seconds.
-   - Center drifts slightly each stage toward a random point (not always centered).
-   - Make all timing values configurable constants.
+2. Elimination mechanics:
+   - During "playing" phase, dead players stay dead (no respawn).
+   - Dead players become spectators: camera follows a random alive player,
+     cycle with left/right arrow keys.
+   - Track "playersAlive" count in state.
+   - Show "X players remaining" on HUD.
 
-3. Zone damage:
-   - Players outside the zone take damage every second.
-   - Damage increases each stage: 5, 10, 20, 40 HP per second.
-   - Show a visual warning on the player's screen edge when near the zone boundary.
+3. Win condition:
+   - Last player standing wins.
+   - Server broadcasts "match_end" with winner info.
+   - Client shows a "Victory!" or "Eliminated" overlay.
+   - After 5 seconds, transition back to waiting phase.
 
-4. Client zone rendering:
-   - Draw the safe zone as a circle.
-   - Everything outside the zone has a tinted/darkened overlay.
-   - Show the next zone as a white circle outline.
-   - On the minimap, show the zone circle and the player's position relative to it.
-   - Show a subtle directional indicator pointing toward the safe zone when outside it.
-
-5. Disable respawning during "playing" phase. Dead players become spectators
-   (camera follows a random alive player, can cycle with left/right arrow keys).
+4. Between-match reset:
+   - Re-close all lockers with new random weapons.
+   - Clear all pickups.
+   - Respawn all players at random positions with Fists.
+   - Reset health and kills.
 ```
 
-### Session 5B: Loot and Weapons
+### Session 5B: Lobby UI and HUD
 
 ```
-Add loot pickups and weapon variety:
+Add match UI:
 
-1. Weapon types (defined in server/src/config/weapons.ts):
-   - Pistol: default weapon. Moderate fire rate, moderate damage, moderate range.
-   - Shotgun: fires 5 projectiles in a spread (30 degree arc). Short range,
-     high damage up close, slow fire rate.
-   - Rifle: fast projectile, long range, moderate fire rate, moderate damage.
-   - Each weapon has: damage, fireRate, projectileSpeed, range, projectileCount,
-     spread, sprite color (for placeholder visuals).
+1. Match status HUD:
+   - Show current phase (waiting/countdown/playing).
+   - During countdown: large centered "3... 2... 1... FIGHT!" text.
+   - During playing: "X alive" indicator.
+   - On death: "You were eliminated! (Spectating)" overlay.
+   - On win: "Victory!" screen.
 
-2. Loot spawns:
-   - Define 20-30 loot spawn points on the map (hardcoded positions for now).
-   - On match start, randomly assign weapons and health packs to spawn points.
-   - Render pickups as colored squares with a letter (P/S/R for weapons, + for health).
-   - Pickups bob up and down slightly (sine wave animation).
+2. Kill feed:
+   - Top-right corner. Shows "PlayerA eliminated PlayerB" entries.
+   - Each fades after 5 seconds. Max 5 visible.
+   - Include weapon name in kill message.
 
-3. Pickup mechanics:
-   - Walk over a pickup to collect it (collision-based, no button press).
-   - Weapons replace your current weapon (drop the old one at your position
-     as a new pickup).
-   - Health packs restore 50 HP, up to MAX_HEALTH.
-   - Server validates all pickups (client can't cheat by claiming a pickup).
+3. Player count:
+   - Show "Players: X" in top-left during waiting.
+   - Show "Alive: X / Y" during playing.
 
-4. All pickup state is in the server schema (ArraySchema<PickupState>).
-   Clients render pickups based on state sync.
+4. Spectator controls:
+   - Left/right arrow keys cycle between alive players.
+   - Show name of spectated player.
 ```
 
 ---
@@ -420,10 +345,10 @@ Improve the visual presentation while keeping the retro aesthetic:
    - Players should be distinct colors (assign on join from a pool of 8 colors).
 
 2. Arena visual improvements:
-   - Floor tiles with subtle variation (2-3 tile variants, randomly placed).
-   - Wall tiles with a distinct look.
+   - Storage facility themed floor and wall tiles.
+   - Locker sprites with open/closed states.
+   - Weapon-specific pickup sprites instead of tinted circles.
    - Add destructible crates as cover (take 3 hits to destroy, drop a random pickup).
-   - Zone outside the safe area: red-tinted overlay that pulses.
 
 3. Player sprites:
    - Generate a simple but recognizable player sprite: a top-down character

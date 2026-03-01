@@ -1,4 +1,4 @@
-# Battle Royale 2D — Claude Code Project Guide
+# Storage Wars — Claude Code Project Guide
 
 ## Progress
 
@@ -6,7 +6,7 @@ See `claude-progress.md` in the project root for current phase status, completed
 
 ## Project Overview
 
-A top-down 2D multiplayer battle royale shooter with retro pixel-art aesthetics and fighting-game-style input combos ("tech"). Browser-based technical prototype.
+A top-down 2D multiplayer last-man-standing elimination shooter set in a storage facility. Players open storage lockers to find household items to use as weapons. Retro pixel-art aesthetics with fighting-game-style input combos ("tech"). Browser-based technical prototype.
 
 ## Tech Stack
 
@@ -19,12 +19,12 @@ A top-down 2D multiplayer battle royale shooter with retro pixel-art aesthetics 
 ## Project Structure
 
 ```
-battle-royale/
+storage-wars/
 ├── client/                  # Phaser 3 game client
 │   ├── src/
 │   │   ├── main.ts          # Phaser game config and entry point
 │   │   ├── scenes/          # Phaser scenes (Boot, Menu, Game, GameOver)
-│   │   ├── entities/        # Game objects (Player, Projectile, Pickup, Zone)
+│   │   ├── entities/        # Game objects (Player, Projectile, Pickup, TestDummy)
 │   │   ├── systems/         # Reusable systems (InputBuffer, ComboDetector, CombatState)
 │   │   ├── network/         # Colyseus client connection, message handlers, prediction
 │   │   ├── ui/              # HUD, health bars, kill feed, debug overlays
@@ -38,8 +38,7 @@ battle-royale/
 │   │   ├── index.ts         # Server entry, Express + Colyseus setup
 │   │   ├── rooms/           # Colyseus room definitions (GameRoom, LobbyRoom)
 │   │   ├── state/           # Colyseus state schemas (GameState, PlayerState, etc.)
-│   │   ├── systems/         # Server-side game logic (Physics, Combat, Zone, Loot)
-│   │   └── config/          # Game balance constants, weapon stats, combo definitions
+│   │   ├── systems/         # Server-side game logic (Combat, Loot)
 │   ├── tsconfig.json
 │   └── package.json
 ├── shared/                  # Shared types between client and server
@@ -76,13 +75,13 @@ battle-royale/
 - Input combo definitions are data-driven: defined as arrays of InputPattern objects, not hardcoded if/else chains.
 - Every system that affects gameplay feel (input buffer size, combo windows, hit-stop duration) should expose its tuning parameters as named constants.
 - Use Phaser's built-in event system for decoupled communication between client systems (e.g., `this.events.emit('combo:executed', comboName)`).
-- Server room logic should be broken into focused system classes (PhysicsSystem, CombatSystem, ZoneSystem) that the room orchestrates, not one giant room file.
+- Server room logic should be broken into focused system classes (CombatSystem, LootSystem) that the room orchestrates, not one giant room file.
 
 ## Current Phase
 
-**Phase 0 — Project Scaffold**
+**Phase 4 — Storage Wars (Complete)**
 
-Setting up the monorepo, build tooling, and proving client-server communication works. Success criteria: a Phaser client renders a player sprite that moves with WASD, and a Colyseus server tracks that player's position and syncs it to other connected clients.
+Loot and weapon system with 7 weapons, storage lockers, pickups, and two equipment slots. Next up: game loop (match lifecycle, win condition, lobby).
 
 ## Development Commands
 

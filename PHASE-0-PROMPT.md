@@ -6,7 +6,7 @@ Copy everything below the line into Claude Code as your initial prompt. Make sur
 
 ---
 
-Set up the monorepo project structure for a 2D multiplayer battle royale game. The stack is Phaser 3 (client), Colyseus (server), TypeScript throughout, Vite for client builds, and npm workspaces for the monorepo.
+Set up the monorepo project structure for a 2D multiplayer last-man-standing elimination game ("Storage Wars"). The stack is Phaser 3 (client), Colyseus (server), TypeScript throughout, Vite for client builds, and npm workspaces for the monorepo.
 
 ### Step 1: Monorepo and workspace setup
 

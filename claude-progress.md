@@ -1,4 +1,4 @@
-# Battle Royale 2D — Progress Tracker
+# Storage Wars — Progress Tracker
 
 ## Phase 0: Project Scaffold — COMPLETE
 - Monorepo with npm workspaces (shared, server, client)

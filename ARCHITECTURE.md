@@ -1,4 +1,4 @@
-# Architecture — Battle Royale 2D
+# Architecture — Storage Wars
 
 ## System Overview
 
@@ -35,10 +35,10 @@
 │         │                                                │
 │         ▼                                                │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
-│  │  Zone        │  │  Loot        │  │  State       │   │
-│  │  System      │  │  System      │  │  Schema      │   │
-│  │  (shrinking  │  │  (spawns,    │  │  (Colyseus   │   │
-│  │   circle)    │  │   pickups)   │  │   sync)      │   │
+│  │  Loot        │  │  State       │  │  Match       │   │
+│  │  System      │  │  Schema      │  │  Lifecycle   │   │
+│  │  (lockers,   │  │  (Colyseus   │  │  (lobby,     │   │
+│  │   pickups)   │  │   sync)      │  │   elim.)     │   │
 │  └──────────────┘  └──────────────┘  └──────────────┘   │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -126,13 +126,12 @@ The server runs a fixed-rate simulation loop (default 20 Hz for prototype):
 
 ```
 Each tick:
-  1. Process all queued client inputs (in order received)
-  2. Run PhysicsSystem.update()    — move entities, resolve collisions
-  3. Run CombatSystem.update()     — process attacks, check hitboxes, apply damage
-  4. Run ZoneSystem.update()       — shrink zone, apply zone damage
-  5. Run LootSystem.update()       — check pickup collisions
-  6. Check win conditions
-  7. Colyseus automatically diffs state and sends patches to clients
+  1. Process all queued client inputs (movement, combat, interact)
+  2. Run LootSystem.tickPickups()  — check pickup collisions, auto-equip
+  3. Run CombatSystem.tickProjectiles() — move projectiles, check hits
+  4. Run CombatSystem.updateRespawns()  — respawn dead players
+  5. Check win conditions (last player standing)
+  6. Colyseus automatically diffs state and sends patches to clients
 ```
 
 ### State Schema (Colyseus)
@@ -141,26 +140,28 @@ Colyseus uses a schema system for efficient state synchronization. Only changed 
 
 ```
 GameState
-├── players: MapSchema<PlayerState>
-│   ├── x, y: number
-│   ├── angle: number
-│   ├── health: number
-│   ├── state: string (idle|moving|attacking|dashing|stunned|dead)
-│   ├── weapon: string
-│   ├── kills: number
-│   └── lastProcessedInput: number (for client prediction reconciliation)
-├── projectiles: ArraySchema<ProjectileState>
-│   ├── id, x, y, angle, speed, ownerId, type
-│   └── createdAt: number
-├── pickups: ArraySchema<PickupState>
-│   ├── id, x, y, type
-│   └── active: boolean
-├── zone: ZoneState
-│   ├── centerX, centerY, currentRadius, targetRadius
-│   └── shrinkRate: number
-├── phase: string (lobby|countdown|playing|ended)
-├── tick: number
-└── playersAlive: number
+├── players: MapSchema<PlayerSchema>
+│   ├── x, y, vx, vy: float32
+│   ├── angle: float32
+│   ├── health: int16
+│   ├── state: string (idle|moving|dead)
+│   ├── meleeWeaponId: string (e.g., "fists", "hammer")
+│   ├── rangedWeaponId: string (e.g., "", "darts", "plates")
+│   ├── kills: uint8
+│   └── lastProcessedInput: uint32
+├── projectiles: ArraySchema<ProjectileSchema>
+│   ├── id, x, y, angle, speed: number
+│   ├── ownerId: string
+│   └── charged: boolean
+├── lockers: ArraySchema<LockerSchema>
+│   ├── id, x, y: number
+│   ├── opened: boolean
+│   └── containedWeaponId: string
+├── pickups: ArraySchema<PickupSchema>
+│   ├── id, x, y: number
+│   └── weaponId: string
+├── phase: string (waiting|playing|ended)
+└── tick: uint32
 ```
 
 ### Server-Side Validation
@@ -199,10 +200,14 @@ State synchronization is handled automatically by Colyseus schema patching.
 
 Additional event messages:
 ```typescript
-interface ServerEvent {
-  type: "kill" | "damage" | "zone_shrink" | "match_start" | "match_end";
-  data: any;
-}
+// Broadcast messages (room.onMessage):
+// "hit"            — damage dealt (targetId, attackerId, damage, type, x, y)
+// "melee_hit"      — melee connected (attackerId, x, y, angle)
+// "kill"           — player eliminated (killerId, victimId, x, y)
+// "respawn"        — player respawned (sessionId, x, y)
+// "weapon_pickup"  — weapon equipped (sessionId, weaponId, slot, weaponName)
+// "locker_opened"  — locker opened (lockerId, x, y, weaponId)
+// "projectile_wall" — projectile hit wall (x, y, charged)
 ```
 
 ## Performance Targets (Prototype)
