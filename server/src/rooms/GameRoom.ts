@@ -1,6 +1,7 @@
 import { Room, Client } from "colyseus";
 import { GameStateSchema, PlayerSchema } from "../state/GameState";
 import { CombatSystem } from "../systems/CombatSystem";
+import { LootSystem } from "../systems/LootSystem";
 import {
   TICK_RATE,
   TICK_INTERVAL_MS,
@@ -11,6 +12,7 @@ import {
   resolveWallCollisions,
   applyMovement,
 } from "shared";
+import { Button } from "shared";
 import type { InputPayload, WallRect } from "shared";
 
 interface QueuedInput {
@@ -23,6 +25,10 @@ export class GameRoom extends Room<GameStateSchema> {
   private tickInterval!: ReturnType<typeof setInterval>;
   private wallRects!: WallRect[];
   private combatSystem!: CombatSystem;
+  private lootSystem!: LootSystem;
+
+  // Track previous buttons per player for edge detection
+  private prevButtons = new Map<string, number>();
 
   onCreate() {
     this.setState(new GameStateSchema());
@@ -31,12 +37,17 @@ export class GameRoom extends Room<GameStateSchema> {
     // Pre-compute wall collision rects once
     this.wallRects = buildWallRects();
 
+    // Create loot system (before combat system, since combat needs it)
+    this.lootSystem = new LootSystem(this, this.state);
+    this.lootSystem.initLockers();
+
     // Create combat system
     this.combatSystem = new CombatSystem(
       this,
       this.state,
       this.wallRects,
-      () => this.findSafeSpawn()
+      () => this.findSafeSpawn(),
+      this.lootSystem
     );
 
     // Listen for input messages
@@ -55,7 +66,7 @@ export class GameRoom extends Room<GameStateSchema> {
     // Start fixed-rate simulation loop
     this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
 
-    console.log(`GameRoom created. Tick rate: ${TICK_RATE}Hz, wallRects: ${this.wallRects.length}`);
+    console.log(`GameRoom created. Tick rate: ${TICK_RATE}Hz, wallRects: ${this.wallRects.length}, lockers: ${this.state.lockers.length}`);
   }
 
   onJoin(client: Client) {
@@ -72,12 +83,16 @@ export class GameRoom extends Room<GameStateSchema> {
 
     this.state.players.set(client.sessionId, player);
     this.combatSystem.registerPlayer(client.sessionId);
+    this.lootSystem.registerPlayer(client.sessionId);
+    this.prevButtons.set(client.sessionId, 0);
     console.log(`Player joined: ${client.sessionId} at (${player.x.toFixed(0)}, ${player.y.toFixed(0)})`);
   }
 
   onLeave(client: Client) {
+    this.lootSystem.unregisterPlayer(client.sessionId);
     this.state.players.delete(client.sessionId);
     this.combatSystem.unregisterPlayer(client.sessionId);
+    this.prevButtons.delete(client.sessionId);
     console.log(`Player left: ${client.sessionId}`);
   }
 
@@ -164,12 +179,23 @@ export class GameRoom extends Room<GameStateSchema> {
       // Track last processed input for client reconciliation
       player.lastProcessedInput = input.seq;
 
+      // Detect INTERACT press (edge detection)
+      const prev = this.prevButtons.get(sessionId) ?? 0;
+      const interactPressed = !!(input.buttons & Button.INTERACT) && !(prev & Button.INTERACT);
+      if (interactPressed) {
+        this.lootSystem.processInteract(sessionId);
+      }
+      this.prevButtons.set(sessionId, input.buttons);
+
       // Process combat input
       this.combatSystem.processInput(sessionId, input, tick);
     }
 
     // Clear queue
     this.inputQueue.length = 0;
+
+    // Tick pickups (auto-collect)
+    this.lootSystem.tickPickups(tick);
 
     // Tick projectiles
     this.combatSystem.tickProjectiles(TICK_INTERVAL_MS);

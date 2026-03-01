@@ -78,6 +78,10 @@ export const MELEE_COOLDOWN_TICKS = 8;         // 400ms at 20Hz
 export const RESPAWN_TIME_MS = 3000;
 export const MAX_SERVER_PROJECTILES = 100;
 
+// --- Loot / Lockers ---
+export const LOCKER_INTERACT_RANGE = 48;  // pixels from player center
+export const PICKUP_RADIUS = 12;          // circle-vs-circle pickup range
+
 // --- Network ---
 export const SERVER_PORT = 3001;
 export const MAX_PLAYERS_PER_ROOM = 20;

@@ -114,3 +114,59 @@
 ### Debug Overlay
 - Added: HP, kills, server projectile count
 - Rows expanded from 16 to 18
+
+## Phase 4: Storage Wars — Loot & Weapons — COMPLETE
+
+### Shared Weapon Registry
+- `shared/src/weapons.ts` — single source of truth for all 7 weapons with `WEAPON_REGISTRY`, `LOOTABLE_WEAPON_IDS`, `getWeaponConfig()`
+- `WeaponId` enum and `WeaponSlot` type added to `shared/src/types.ts`
+- `WeaponConfig` refactored: ranged stats and melee stats are optional (slot-specific)
+- Deleted `client/src/config/weapons.ts` and `server/src/config/weapons.ts` (duplicated files)
+
+### Weapons (7 total)
+- **Fists** (melee, default): 10 dmg, 36 range, 350ms CD
+- **Hammer** (melee): 40 dmg, 44 range, 700ms CD — slow heavy hitter
+- **Lamp** (melee): 20 dmg, 56 range, 450ms CD — long reach
+- **Frying Pan** (melee): 30 dmg, 40 range, 500ms CD — wide 100° arc
+- **Darts** (ranged): 12 dmg, 150ms fire rate, 700 speed — fast spam
+- **Plates** (ranged): 25 dmg, 500ms fire rate, 400 speed — slow heavy
+- **Staple Gun** (ranged): 8 dmg, 100ms fire rate, 800 speed — highest ROF
+
+### Equipment System
+- Two slots: melee (always filled, starts with Fists) + ranged (starts empty)
+- Left-click = ranged (if equipped), right-click = melee
+- Weapons dropped on death (become pickups), player respawns with Fists only
+- Picking up a weapon auto-equips to correct slot; old weapon drops as pickup
+
+### Storage Lockers
+- `shared/src/locker-data.ts` — 18 `LockerSpawn` positions near obstacles
+- `LockerSchema` (server): id, x, y, opened, containedWeaponId
+- Each locker contains a random lootable weapon
+- Press E near closed locker → server opens it → weapon spawns as pickup
+
+### Pickups
+- `PickupSchema` (server): id, x, y, weaponId
+- Server auto-collects pickups on player-circle overlap each tick
+- Pickup sprites: white circle tinted per weapon color + weapon name label
+
+### Server LootSystem (`server/src/systems/LootSystem.ts`)
+- `initLockers()`: populates lockers with random weapons
+- `processInteract()`: proximity check, opens locker, spawns pickup
+- `tickPickups()`: circle-vs-circle overlap → auto-equip + old weapon drop
+- `onPlayerRespawn()`: drops weapons at death location, resets to Fists
+- `getPlayerMeleeConfig()`/`getPlayerRangedConfig()`: used by CombatSystem
+
+### Server CombatSystem Refactor
+- Now takes LootSystem reference; uses per-player weapon configs for all damage/cooldown calculations
+- Shoot cooldown ticks derived from weapon's `fireRateMs`
+- Melee cooldown ticks derived from weapon's `meleeCooldownMs`
+- Charged shot applies multiplier to equipped ranged weapon's damage
+- On kill: calls `lootSystem.onPlayerRespawn()` to drop victim's weapons
+
+### Client Updates
+- **BootScene**: generated textures for locker_closed, locker_open, pickup
+- **CombatManager**: dynamic weapon configs via `setMeleeWeapon()`/`setRangedWeapon()`; `tryShoot()` returns false if no ranged weapon; `setOfflineDefaults()` for offline mode
+- **GameScene**: E key for INTERACT button; locker sprites synced via `room.state.lockers.onAdd`; pickup sprites via `room.state.pickups.onAdd/onRemove`; weapon config sync from player schema changes; "Press E" interaction prompt near closed lockers; `weapon_pickup`/`locker_opened` message handlers
+- **WeaponHud** (`client/src/ui/WeaponHud.ts`): bottom-center overlay showing `[RMB] weapon` + `[LMB] weapon`
+- **DebugOverlay**: added equipped weapon names row (melee + ranged), expanded to 20 rows
+- **Minimap**: locker dots (orange = closed, gray = open)

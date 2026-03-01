@@ -51,10 +51,28 @@ export class Minimap {
     }
   }
 
-  update(playerX: number, playerY: number) {
+  update(
+    playerX: number,
+    playerY: number,
+    lockers?: Array<{ x: number; y: number; opened: boolean }>
+  ) {
     // Redraw: clear dynamic elements only by redrawing everything
     this.graphics.clear();
     this.drawStatic();
+
+    // Locker dots
+    if (lockers) {
+      for (const locker of lockers) {
+        const color = locker.opened ? 0x555555 : 0xFF8800;
+        this.graphics.fillStyle(color, 1);
+        this.graphics.fillRect(
+          locker.x * this.scaleX - 1,
+          locker.y * this.scaleY - 1,
+          3,
+          3
+        );
+      }
+    }
 
     // Player dot
     this.graphics.fillStyle(0x00ff88, 1);

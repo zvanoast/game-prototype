@@ -20,11 +20,30 @@ export class PlayerSchema extends Schema {
   @type("string") state: string = "idle";
   @type("uint8") kills: number = 0;
   @type("uint32") lastProcessedInput: number = 0;
+  @type("string") meleeWeaponId: string = "fists";
+  @type("string") rangedWeaponId: string = "";
+}
+
+export class LockerSchema extends Schema {
+  @type("uint8") id: number = 0;
+  @type("float32") x: number = 0;
+  @type("float32") y: number = 0;
+  @type("boolean") opened: boolean = false;
+  @type("string") containedWeaponId: string = "";
+}
+
+export class PickupSchema extends Schema {
+  @type("uint16") id: number = 0;
+  @type("float32") x: number = 0;
+  @type("float32") y: number = 0;
+  @type("string") weaponId: string = "";
 }
 
 export class GameStateSchema extends Schema {
   @type({ map: PlayerSchema }) players = new MapSchema<PlayerSchema>();
   @type([ ProjectileSchema ]) projectiles = new ArraySchema<ProjectileSchema>();
+  @type([ LockerSchema ]) lockers = new ArraySchema<LockerSchema>();
+  @type([ PickupSchema ]) pickups = new ArraySchema<PickupSchema>();
   @type("string") phase: string = "waiting"; // waiting | playing | ended
   @type("uint32") tick: number = 0;
 }

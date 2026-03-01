@@ -68,19 +68,39 @@ export enum WeaponType {
   Melee   = "melee",
 }
 
+// --- Weapon Slot & ID ---
+
+export type WeaponSlot = "melee" | "ranged";
+
+export enum WeaponId {
+  Fists     = "fists",
+  Hammer    = "hammer",
+  Lamp      = "lamp",
+  FryingPan = "frying_pan",
+  Darts     = "darts",
+  Plates    = "plates",
+  StapleGun = "staple_gun",
+}
+
 // --- Weapon Config ---
 
 export interface WeaponConfig {
+  id: WeaponId;
   name: string;
-  damage: number;
-  fireRateMs: number;
-  projectileSpeed: number;
-  projectileRange: number;
-  projectileRadius: number;
-  projectileColor: number;
-  meleeDamage: number;
-  meleeArcDegrees: number;
-  meleeRange: number;
-  meleeActiveFrames: number;
-  meleeCooldownMs: number;
+  slot: WeaponSlot;
+  /** Tint color for the pickup sprite */
+  color: number;
+  // Ranged stats (only for ranged weapons)
+  damage?: number;
+  fireRateMs?: number;
+  projectileSpeed?: number;
+  projectileRange?: number;
+  projectileRadius?: number;
+  projectileColor?: number;
+  // Melee stats (only for melee weapons)
+  meleeDamage?: number;
+  meleeArcDegrees?: number;
+  meleeRange?: number;
+  meleeActiveFrames?: number;
+  meleeCooldownMs?: number;
 }

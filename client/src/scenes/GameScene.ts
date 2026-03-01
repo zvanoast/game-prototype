@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { NetworkManager } from "../network/NetworkManager";
 import { DebugOverlay } from "../ui/DebugOverlay";
 import { Minimap } from "../ui/Minimap";
+import { WeaponHud } from "../ui/WeaponHud";
 import { DamageNumberManager } from "../ui/DamageNumber";
 import { TilemapManager } from "../world/TilemapManager";
 import { CombatManager } from "../systems/CombatManager";
@@ -18,6 +19,7 @@ import {
   ARENA_HEIGHT,
   PLAYER_RADIUS,
   MAX_HEALTH,
+  LOCKER_INTERACT_RANGE,
   CHARGED_SHOT_MIN_FRAMES,
   SHAKE_SHOOT_MAG,
   SHAKE_SHOOT_DURATION,
@@ -32,6 +34,8 @@ import {
   applyMovement,
   resolveWallCollisions,
   buildWallRects,
+  getWeaponConfig,
+  WeaponId,
 } from "shared";
 import { Button } from "shared";
 import type { InputPayload, WallRect } from "shared";
@@ -57,6 +61,7 @@ export class GameScene extends Phaser.Scene {
   private network!: NetworkManager;
   private debugOverlay!: DebugOverlay;
   private minimap!: Minimap;
+  private weaponHud!: WeaponHud;
   private tilemapManager!: TilemapManager;
   private combatManager!: CombatManager;
   private damageNumbers!: DamageNumberManager;
@@ -78,6 +83,7 @@ export class GameScene extends Phaser.Scene {
     DOWN: Phaser.Input.Keyboard.Key;
     LEFT: Phaser.Input.Keyboard.Key;
     RIGHT: Phaser.Input.Keyboard.Key;
+    E: Phaser.Input.Keyboard.Key;
   };
 
   // Local player
@@ -90,6 +96,10 @@ export class GameScene extends Phaser.Scene {
   private offlineMode = false;
   private localHealth = MAX_HEALTH;
   private localKills = 0;
+
+  // Equipment tracking
+  private localMeleeWeaponId = WeaponId.Fists as string;
+  private localRangedWeaponId = "";
 
   // Button state tracking
   private attackHeld = false;
@@ -104,6 +114,15 @@ export class GameScene extends Phaser.Scene {
 
   // Server projectile sprites (keyed by projectile id)
   private serverProjectileSprites = new Map<number, Phaser.GameObjects.Sprite>();
+
+  // Lockers
+  private lockerSprites = new Map<number, Phaser.GameObjects.Sprite>();
+
+  // Pickups
+  private pickupSprites = new Map<number, Phaser.GameObjects.Container>();
+
+  // Interaction prompt
+  private interactPrompt!: Phaser.GameObjects.Text;
 
   // Dummies
   private dummies: TestDummy[] = [];
@@ -135,6 +154,7 @@ export class GameScene extends Phaser.Scene {
       DOWN: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
       LEFT: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
       RIGHT: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
+      E: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E),
     };
 
     // Spawn test dummies
@@ -161,8 +181,23 @@ export class GameScene extends Phaser.Scene {
     // Minimap
     this.minimap = new Minimap(this, this.tilemapManager.getWallPositions());
 
+    // Weapon HUD
+    this.weaponHud = new WeaponHud(this);
+
     // Damage numbers
     this.damageNumbers = new DamageNumberManager(this);
+
+    // Interaction prompt (hidden by default)
+    this.interactPrompt = this.add.text(0, 0, "Press E", {
+      fontSize: "14px",
+      fontFamily: "monospace",
+      color: "#ffffff",
+      backgroundColor: "#00000088",
+      padding: { x: 6, y: 3 },
+    });
+    this.interactPrompt.setOrigin(0.5, 1);
+    this.interactPrompt.setDepth(50);
+    this.interactPrompt.setVisible(false);
 
     // Combat manager (initialized after player spawns)
     this.combatManager = new CombatManager(this);
@@ -271,6 +306,10 @@ export class GameScene extends Phaser.Scene {
           this.spawnLocalPlayer(player.x, player.y);
           this.localHealth = player.health;
           this.localKills = player.kills ?? 0;
+          this.localMeleeWeaponId = player.meleeWeaponId ?? WeaponId.Fists;
+          this.localRangedWeaponId = player.rangedWeaponId ?? "";
+          this.combatManager.setMeleeWeapon(this.localMeleeWeaponId);
+          this.combatManager.setRangedWeapon(this.localRangedWeaponId);
           console.log("Local player spawned");
         } else {
           const sprite = this.add.sprite(player.x, player.y, "player_remote");
@@ -298,6 +337,18 @@ export class GameScene extends Phaser.Scene {
             this.reconcile(player);
             this.localHealth = player.health;
             this.localKills = player.kills ?? 0;
+
+            // Track weapon changes
+            const newMelee = player.meleeWeaponId ?? WeaponId.Fists;
+            const newRanged = player.rangedWeaponId ?? "";
+            if (newMelee !== this.localMeleeWeaponId) {
+              this.localMeleeWeaponId = newMelee;
+              this.combatManager.setMeleeWeapon(newMelee);
+            }
+            if (newRanged !== this.localRangedWeaponId) {
+              this.localRangedWeaponId = newRanged;
+              this.combatManager.setRangedWeapon(newRanged);
+            }
 
             // Handle local player death state from server
             if (player.state === "dead" && this.localPlayer) {
@@ -328,6 +379,60 @@ export class GameScene extends Phaser.Scene {
           this.remoteHealthBars.delete(sessionId);
         }
         console.log(`Remote player left: ${sessionId}`);
+      });
+
+      // --- Lockers ---
+      room.state.lockers.onAdd((locker: any, _key: number) => {
+        const texture = locker.opened ? "locker_open" : "locker_closed";
+        const sprite = this.add.sprite(locker.x, locker.y, texture);
+        sprite.setOrigin(0.5, 0.5);
+        sprite.setDepth(3);
+        this.lockerSprites.set(locker.id, sprite);
+
+        locker.onChange(() => {
+          const s = this.lockerSprites.get(locker.id);
+          if (s) {
+            s.setTexture(locker.opened ? "locker_open" : "locker_closed");
+          }
+        });
+      });
+
+      // --- Pickups ---
+      room.state.pickups.onAdd((pickup: any, _key: number) => {
+        const weapon = getWeaponConfig(pickup.weaponId);
+        const color = weapon?.color ?? 0xffffff;
+
+        const sprite = this.add.sprite(0, 0, "pickup");
+        sprite.setTint(color);
+        sprite.setOrigin(0.5, 0.5);
+
+        const label = this.add.text(0, 12, weapon?.name ?? pickup.weaponId, {
+          fontSize: "10px",
+          fontFamily: "monospace",
+          color: "#ffffff",
+          backgroundColor: "#00000088",
+          padding: { x: 2, y: 1 },
+        });
+        label.setOrigin(0.5, 0);
+
+        const container = this.add.container(pickup.x, pickup.y, [sprite, label]);
+        container.setDepth(5);
+        this.pickupSprites.set(pickup.id, container);
+
+        pickup.onChange(() => {
+          const c = this.pickupSprites.get(pickup.id);
+          if (c) {
+            c.setPosition(pickup.x, pickup.y);
+          }
+        });
+      });
+
+      room.state.pickups.onRemove((pickup: any, _key: number) => {
+        const container = this.pickupSprites.get(pickup.id);
+        if (container) {
+          container.destroy();
+          this.pickupSprites.delete(pickup.id);
+        }
       });
 
       // Listen for server projectile state changes
@@ -404,6 +509,20 @@ export class GameScene extends Phaser.Scene {
         this.particles.impact(data.x, data.y, data.charged ? 0xff8800 : 0xffff00);
       });
 
+      room.onMessage("locker_opened", (data: any) => {
+        // Particle burst at locker location
+        this.particles.impact(data.x, data.y, 0x8B6914);
+      });
+
+      room.onMessage("weapon_pickup", (data: any) => {
+        if (data.sessionId === room.sessionId) {
+          // Particle burst on local player
+          if (this.localPlayer) {
+            this.particles.impact(this.localPlayer.x, this.localPlayer.y, 0x00ff88);
+          }
+        }
+      });
+
       room.onLeave((code: number) => {
         console.log(`Disconnected from room (code: ${code})`);
       });
@@ -411,6 +530,7 @@ export class GameScene extends Phaser.Scene {
       console.warn("Connection failed, starting in offline mode:", err);
       this.offlineMode = true;
       this.spawnLocalPlayer(ARENA_WIDTH / 2, ARENA_HEIGHT / 2);
+      this.combatManager.setOfflineDefaults();
     }
   }
 
@@ -438,6 +558,7 @@ export class GameScene extends Phaser.Scene {
     let buttons = 0;
     if (leftDown) buttons |= Button.ATTACK;
     if (rightDown) buttons |= Button.MELEE;
+    if (this.keys.E.isDown) buttons |= Button.INTERACT;
     this.attackHeld = leftDown;
 
     // Record input to buffer
@@ -569,6 +690,9 @@ export class GameScene extends Phaser.Scene {
       this.serverProjectileCount = (room.state as any)?.projectiles?.length ?? 0;
     }
 
+    // Update interaction prompt
+    this.updateInteractPrompt();
+
     // Update combat
     this.combatManager.update(time, delta);
 
@@ -579,14 +703,19 @@ export class GameScene extends Phaser.Scene {
 
     // Update minimap
     if (this.localPlayer) {
-      this.minimap.update(this.localPlayer.x, this.localPlayer.y);
+      this.minimap.update(this.localPlayer.x, this.localPlayer.y, this.getLockerData());
     }
+
+    // Update weapon HUD
+    this.weaponHud.update(this.localMeleeWeaponId, this.localRangedWeaponId);
 
     // Flush artificial latency queue
     this.network.flush();
 
     // Update debug overlay
     const speed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
+    const meleeWeapon = getWeaponConfig(this.localMeleeWeaponId);
+    const rangedWeapon = this.localRangedWeaponId ? getWeaponConfig(this.localRangedWeaponId) : null;
     this.debugOverlay.update({
       room: this.network.getRoom(),
       localSprite: this.localPlayer,
@@ -606,7 +735,70 @@ export class GameScene extends Phaser.Scene {
       localHealth: this.localHealth,
       localKills: this.localKills,
       serverProjectileCount: this.serverProjectileCount,
+      meleeWeaponName: meleeWeapon?.name ?? "Fists",
+      rangedWeaponName: rangedWeapon?.name ?? "--",
     });
+  }
+
+  /** Get locker data for minimap rendering */
+  private getLockerData(): Array<{ x: number; y: number; opened: boolean }> {
+    const room = this.network.getRoom();
+    if (!room) return [];
+    const lockers: Array<{ x: number; y: number; opened: boolean }> = [];
+    const state = room.state as any;
+    if (state?.lockers) {
+      for (let i = 0; i < state.lockers.length; i++) {
+        const l = state.lockers.at(i);
+        if (l) lockers.push({ x: l.x, y: l.y, opened: l.opened });
+      }
+    }
+    return lockers;
+  }
+
+  /** Show "Press E" prompt when near a closed locker */
+  private updateInteractPrompt() {
+    if (!this.localPlayer) {
+      this.interactPrompt.setVisible(false);
+      return;
+    }
+
+    const room = this.network.getRoom();
+    if (!room) {
+      this.interactPrompt.setVisible(false);
+      return;
+    }
+
+    const state = room.state as any;
+    if (!state?.lockers) {
+      this.interactPrompt.setVisible(false);
+      return;
+    }
+
+    let nearestDist = Infinity;
+    let nearestX = 0;
+    let nearestY = 0;
+
+    for (let i = 0; i < state.lockers.length; i++) {
+      const locker = state.lockers.at(i);
+      if (!locker || locker.opened) continue;
+
+      const dx = this.localPlayer.x - locker.x;
+      const dy = this.localPlayer.y - locker.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist <= LOCKER_INTERACT_RANGE && dist < nearestDist) {
+        nearestDist = dist;
+        nearestX = locker.x;
+        nearestY = locker.y;
+      }
+    }
+
+    if (nearestDist <= LOCKER_INTERACT_RANGE) {
+      this.interactPrompt.setPosition(nearestX, nearestY - 24);
+      this.interactPrompt.setVisible(true);
+    } else {
+      this.interactPrompt.setVisible(false);
+    }
   }
 
   private drawRemoteHealthBar(g: Phaser.GameObjects.Graphics, x: number, y: number, health: number) {

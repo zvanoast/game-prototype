@@ -1,24 +1,17 @@
 import { Room } from "colyseus";
-import { ArraySchema } from "@colyseus/schema";
 import { GameStateSchema, PlayerSchema, ProjectileSchema } from "../state/GameState";
-import { DEFAULT_WEAPON } from "../config/weapons";
+import { LootSystem } from "./LootSystem";
 import type { InputPayload, WallRect } from "shared";
 import {
   PLAYER_RADIUS,
   MAX_HEALTH,
-  SHOOT_COOLDOWN_TICKS,
-  MELEE_COOLDOWN_TICKS,
   RESPAWN_TIME_MS,
   MAX_SERVER_PROJECTILES,
-  PROJECTILE_SPEED,
-  PROJECTILE_MAX_RANGE,
-  PROJECTILE_RADIUS,
-  MELEE_RANGE,
-  MELEE_ARC_DEGREES,
   CHARGED_SHOT_SPEED,
   CHARGED_SHOT_DAMAGE_MULT,
   CHARGED_SHOT_SIZE,
   CHARGED_SHOT_MIN_FRAMES,
+  TICK_RATE,
 } from "shared";
 import { Button } from "shared";
 
@@ -49,6 +42,7 @@ export class CombatSystem {
   private room: Room<GameStateSchema>;
   private state: GameStateSchema;
   private wallRects: WallRect[];
+  private lootSystem: LootSystem;
   private playerCombat = new Map<string, PlayerCombatState>();
   private projectiles: ServerProjectile[] = [];
   private nextProjectileId = 1;
@@ -58,12 +52,14 @@ export class CombatSystem {
     room: Room<GameStateSchema>,
     state: GameStateSchema,
     wallRects: WallRect[],
-    findSafeSpawn: () => { x: number; y: number }
+    findSafeSpawn: () => { x: number; y: number },
+    lootSystem: LootSystem
   ) {
     this.room = room;
     this.state = state;
     this.wallRects = wallRects;
     this.findSafeSpawn = findSafeSpawn;
+    this.lootSystem = lootSystem;
   }
 
   registerPlayer(sessionId: string) {
@@ -105,16 +101,24 @@ export class CombatSystem {
       combat.chargeFrameCount++;
     }
 
-    // Attack pressed → fire normal projectile
-    if (attackPressed && (tick - combat.lastShootTick >= SHOOT_COOLDOWN_TICKS)) {
-      this.fireProjectile(sessionId, player, false);
-      combat.lastShootTick = tick;
-      combat.chargeFrameCount = 0;
-    }
+    // Get per-player weapon configs
+    const rangedConfig = this.lootSystem.getPlayerRangedConfig(sessionId);
+    const meleeConfig = this.lootSystem.getPlayerMeleeConfig(sessionId);
 
-    // Attack released after charging → fire charged projectile
-    if (attackReleased && combat.chargeFrameCount >= CHARGED_SHOT_MIN_FRAMES) {
-      this.fireProjectile(sessionId, player, true);
+    // Shoot cooldown in ticks (derived from weapon's fireRateMs)
+    const shootCooldownTicks = rangedConfig
+      ? Math.max(1, Math.round((rangedConfig.fireRateMs ?? 200) / (1000 / TICK_RATE)))
+      : 999;
+
+    // Melee cooldown in ticks
+    const meleeCooldownTicks = Math.max(1, Math.round(
+      (meleeConfig.meleeCooldownMs ?? 400) / (1000 / TICK_RATE)
+    ));
+
+    // Fire on release: short hold = normal shot, long hold = charged shot
+    if (attackReleased && rangedConfig && (tick - combat.lastShootTick >= shootCooldownTicks)) {
+      const charged = combat.chargeFrameCount >= CHARGED_SHOT_MIN_FRAMES;
+      this.fireProjectile(sessionId, player, charged, rangedConfig);
       combat.lastShootTick = tick;
     }
 
@@ -123,25 +127,31 @@ export class CombatSystem {
     }
 
     // Melee pressed
-    if (meleePressed && (tick - combat.lastMeleeTick >= MELEE_COOLDOWN_TICKS)) {
-      this.performMelee(sessionId, player, tick);
+    if (meleePressed && (tick - combat.lastMeleeTick >= meleeCooldownTicks)) {
+      this.performMelee(sessionId, player, tick, meleeConfig);
       combat.lastMeleeTick = tick;
     }
 
     combat.lastButtons = buttons;
   }
 
-  private fireProjectile(sessionId: string, player: PlayerSchema, charged: boolean) {
+  private fireProjectile(
+    sessionId: string,
+    player: PlayerSchema,
+    charged: boolean,
+    rangedConfig: import("shared").WeaponConfig
+  ) {
     if (this.projectiles.length >= MAX_SERVER_PROJECTILES) return;
 
-    const speed = charged ? CHARGED_SHOT_SPEED : PROJECTILE_SPEED;
-    const damage = charged
-      ? DEFAULT_WEAPON.damage * CHARGED_SHOT_DAMAGE_MULT
-      : DEFAULT_WEAPON.damage;
-    const radius = charged ? CHARGED_SHOT_SIZE / 2 : PROJECTILE_RADIUS;
-    const maxRange = charged
-      ? PROJECTILE_MAX_RANGE * 1.5
-      : PROJECTILE_MAX_RANGE;
+    const baseDamage = rangedConfig.damage ?? 15;
+    const baseSpeed = rangedConfig.projectileSpeed ?? 600;
+    const baseRadius = rangedConfig.projectileRadius ?? 2;
+    const baseRange = rangedConfig.projectileRange ?? 800;
+
+    const speed = charged ? CHARGED_SHOT_SPEED : baseSpeed;
+    const damage = charged ? baseDamage * CHARGED_SHOT_DAMAGE_MULT : baseDamage;
+    const radius = charged ? CHARGED_SHOT_SIZE / 2 : baseRadius;
+    const maxRange = charged ? baseRange * 1.5 : baseRange;
 
     const spawnDist = 20;
     const sx = player.x + Math.cos(player.angle) * spawnDist;
@@ -169,10 +179,16 @@ export class CombatSystem {
     this.addProjectileToSchema(proj);
   }
 
-  private performMelee(sessionId: string, attacker: PlayerSchema, tick: number) {
-    const arcHalf = (MELEE_ARC_DEGREES / 2) * (Math.PI / 180);
-    const range = MELEE_RANGE;
-    const damage = DEFAULT_WEAPON.meleeDamage;
+  private performMelee(
+    sessionId: string,
+    attacker: PlayerSchema,
+    _tick: number,
+    meleeConfig: import("shared").WeaponConfig
+  ) {
+    const arcDeg = meleeConfig.meleeArcDegrees ?? 90;
+    const arcHalf = (arcDeg / 2) * (Math.PI / 180);
+    const range = meleeConfig.meleeRange ?? 36;
+    const damage = meleeConfig.meleeDamage ?? 10;
 
     let hitAny = false;
 
@@ -311,6 +327,9 @@ export class CombatSystem {
       if (attacker) {
         attacker.kills++;
       }
+
+      // Drop weapons at death location
+      this.lootSystem.onPlayerRespawn(targetId, target.x, target.y);
 
       const combat = this.playerCombat.get(targetId);
       if (combat) {

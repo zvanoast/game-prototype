@@ -1,5 +1,7 @@
 import Phaser from "phaser";
-import { DEFAULT_WEAPON } from "../config/weapons";
+import type { WeaponConfig } from "shared";
+import { getWeaponConfig, WEAPON_FISTS } from "shared";
+import { WeaponId } from "shared";
 import type { TestDummy } from "../entities/TestDummy";
 import {
   CHARGED_SHOT_SPEED,
@@ -22,6 +24,10 @@ export class CombatManager {
   // Multiplayer mode: when true, predicted projectiles only hit walls, melee is visual-only
   private multiplayerMode = false;
 
+  // Dynamic weapon configs
+  private meleeConfig: WeaponConfig = WEAPON_FISTS;
+  private rangedConfig: WeaponConfig | null = null;
+
   // Projectile pool
   private projectiles!: Phaser.Physics.Arcade.Group;
   private projectileOrigins = new Map<Phaser.GameObjects.GameObject, { x: number; y: number }>();
@@ -34,7 +40,7 @@ export class CombatManager {
   private meleeArcGraphics!: Phaser.GameObjects.Graphics;
   private meleeArcTimer = 0;
   private meleeArcFrames = 0;
-  private meleeArcRange = DEFAULT_WEAPON.meleeRange;
+  private meleeArcRange = WEAPON_FISTS.meleeRange!;
 
   // Muzzle flash
   private muzzleFlash!: Phaser.GameObjects.Sprite;
@@ -52,6 +58,35 @@ export class CombatManager {
 
   setMultiplayerMode(enabled: boolean) {
     this.multiplayerMode = enabled;
+  }
+
+  /** Set melee weapon by ID */
+  setMeleeWeapon(id: string) {
+    this.meleeConfig = getWeaponConfig(id) ?? WEAPON_FISTS;
+  }
+
+  /** Set ranged weapon by ID (empty string = no ranged weapon) */
+  setRangedWeapon(id: string) {
+    if (!id) {
+      this.rangedConfig = null;
+    } else {
+      this.rangedConfig = getWeaponConfig(id) ?? null;
+    }
+  }
+
+  /** Set offline defaults (fists + no ranged) */
+  setOfflineDefaults() {
+    this.meleeConfig = WEAPON_FISTS;
+    // Give darts in offline mode so ranged works
+    this.rangedConfig = getWeaponConfig(WeaponId.Darts) ?? null;
+  }
+
+  getMeleeConfig(): WeaponConfig {
+    return this.meleeConfig;
+  }
+
+  getRangedConfig(): WeaponConfig | null {
+    return this.rangedConfig;
   }
 
   init(
@@ -97,7 +132,7 @@ export class CombatManager {
       for (const dummy of this.dummies) {
         this.scene.physics.add.overlap(this.projectiles, dummy, (obj1, obj2) => {
           const proj = (obj1 !== dummy ? obj1 : obj2) as Phaser.Physics.Arcade.Sprite;
-          const damage = proj.getData("damage") ?? DEFAULT_WEAPON.damage;
+          const damage = proj.getData("damage") ?? (this.rangedConfig?.damage ?? 15);
           const isCharged = proj.getData("charged") ?? false;
           const knockback = isCharged ? KNOCKBACK_CHARGED : KNOCKBACK_PROJECTILE;
           const color = isCharged ? 0xff8800 : 0xffff00;
@@ -144,18 +179,20 @@ export class CombatManager {
     return this.aimAngle;
   }
 
-  /** Normal shot */
+  /** Normal shot — returns false if no ranged weapon equipped */
   tryShoot(): boolean {
     if (!this.initialized) return false;
+    if (!this.rangedConfig) return false;
+
     const now = this.scene.time.now;
-    if (now - this.lastShootTime < DEFAULT_WEAPON.fireRateMs) return false;
+    if (now - this.lastShootTime < (this.rangedConfig.fireRateMs ?? 200)) return false;
     this.lastShootTime = now;
 
     this.fireProjectile(
-      DEFAULT_WEAPON.projectileSpeed,
-      DEFAULT_WEAPON.damage,
-      DEFAULT_WEAPON.projectileRadius,
-      DEFAULT_WEAPON.projectileRange,
+      this.rangedConfig.projectileSpeed ?? 600,
+      this.rangedConfig.damage ?? 15,
+      this.rangedConfig.projectileRadius ?? 2,
+      this.rangedConfig.projectileRange ?? 800,
       false
     );
 
@@ -167,13 +204,18 @@ export class CombatManager {
   /** Charged shot */
   fireChargedShot() {
     if (!this.initialized) return;
+    if (!this.rangedConfig) return;
+
     this.lastShootTime = this.scene.time.now;
+
+    const baseDamage = this.rangedConfig.damage ?? 15;
+    const baseRange = this.rangedConfig.projectileRange ?? 800;
 
     this.fireProjectile(
       CHARGED_SHOT_SPEED,
-      DEFAULT_WEAPON.damage * CHARGED_SHOT_DAMAGE_MULT,
+      baseDamage * CHARGED_SHOT_DAMAGE_MULT,
       CHARGED_SHOT_SIZE / 2,
-      DEFAULT_WEAPON.projectileRange * 1.5,
+      baseRange * 1.5,
       true,
       0xff8800
     );
@@ -210,7 +252,13 @@ export class CombatManager {
       proj.setTint(tint);
       proj.setScale(2);
     } else {
-      proj.clearTint();
+      // Tint projectile with weapon color
+      const color = this.rangedConfig?.projectileColor;
+      if (color !== undefined) {
+        proj.setTint(color);
+      } else {
+        proj.clearTint();
+      }
       proj.setScale(1);
     }
     proj.body!.enable = true;
@@ -231,17 +279,17 @@ export class CombatManager {
   tryMelee(rangeMult = 1, damageMult = 1, knockbackMult = 1) {
     if (!this.initialized) return;
     const now = this.scene.time.now;
-    if (now - this.lastMeleeTime < DEFAULT_WEAPON.meleeCooldownMs) return;
+    if (now - this.lastMeleeTime < (this.meleeConfig.meleeCooldownMs ?? 400)) return;
     this.lastMeleeTime = now;
 
-    const range = DEFAULT_WEAPON.meleeRange * rangeMult;
+    const range = (this.meleeConfig.meleeRange ?? 36) * rangeMult;
 
     this.scene.events.emit("sfx:melee_swing");
 
     // In multiplayer mode, only show the arc visual — server handles damage
     if (!this.multiplayerMode) {
-      const arcHalf = Phaser.Math.DegToRad(DEFAULT_WEAPON.meleeArcDegrees / 2);
-      const damage = DEFAULT_WEAPON.meleeDamage * damageMult;
+      const arcHalf = Phaser.Math.DegToRad((this.meleeConfig.meleeArcDegrees ?? 90) / 2);
+      const damage = (this.meleeConfig.meleeDamage ?? 10) * damageMult;
       const knockback = KNOCKBACK_MELEE * knockbackMult;
 
       let hitSomething = false;
@@ -276,7 +324,7 @@ export class CombatManager {
     }
 
     // Show melee arc visual
-    this.meleeArcFrames = DEFAULT_WEAPON.meleeActiveFrames;
+    this.meleeArcFrames = this.meleeConfig.meleeActiveFrames ?? 4;
     this.meleeArcTimer = this.meleeArcFrames;
     this.meleeArcRange = range;
   }
@@ -305,6 +353,7 @@ export class CombatManager {
   updateChargeVisual(isCharging: boolean, chargeFrames: number, minFrames: number) {
     this.chargeGraphics.clear();
     if (!this.initialized || !isCharging || chargeFrames < 5) return;
+    if (!this.rangedConfig) return; // Can't charge without ranged weapon
 
     const progress = Math.min(chargeFrames / minFrames, 1);
     const radius = 20 + progress * 10;
@@ -334,7 +383,7 @@ export class CombatManager {
         const dx = proj.x - origin.x;
         const dy = proj.y - origin.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        const range = proj.getData("range") ?? DEFAULT_WEAPON.projectileRange;
+        const range = proj.getData("range") ?? (this.rangedConfig?.projectileRange ?? 800);
         if (dist >= range) {
           this.destroyProjectile(proj);
         }
@@ -360,7 +409,7 @@ export class CombatManager {
   }
 
   private drawMeleeArc() {
-    const arcHalf = Phaser.Math.DegToRad(DEFAULT_WEAPON.meleeArcDegrees / 2);
+    const arcHalf = Phaser.Math.DegToRad((this.meleeConfig.meleeArcDegrees ?? 90) / 2);
     const range = this.meleeArcRange;
 
     this.meleeArcGraphics.clear();
@@ -394,12 +443,13 @@ export class CombatManager {
   }
 
   getShootCooldownRemaining(): number {
+    if (!this.rangedConfig) return 0;
     const elapsed = this.scene.time.now - this.lastShootTime;
-    return Math.max(0, DEFAULT_WEAPON.fireRateMs - elapsed);
+    return Math.max(0, (this.rangedConfig.fireRateMs ?? 200) - elapsed);
   }
 
   getMeleeCooldownRemaining(): number {
     const elapsed = this.scene.time.now - this.lastMeleeTime;
-    return Math.max(0, DEFAULT_WEAPON.meleeCooldownMs - elapsed);
+    return Math.max(0, (this.meleeConfig.meleeCooldownMs ?? 400) - elapsed);
   }
 }

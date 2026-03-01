@@ -21,6 +21,8 @@ export interface DebugData {
   localHealth?: number;
   localKills?: number;
   serverProjectileCount?: number;
+  meleeWeaponName?: string;
+  rangedWeaponName?: string;
 }
 
 export class DebugOverlay {
@@ -52,7 +54,7 @@ export class DebugOverlay {
       padding: { x: 4, y: 2 },
     };
 
-    for (let i = 0; i < 18; i++) {
+    for (let i = 0; i < 20; i++) {
       const text = scene.add.text(0, i * 18, "", style);
       this.texts.push(text);
       this.container.add(text);
@@ -102,6 +104,8 @@ export class DebugOverlay {
     const localHealth = data.localHealth ?? 0;
     const localKills = data.localKills ?? 0;
     const serverProjCount = data.serverProjectileCount ?? 0;
+    const meleeWeapon = data.meleeWeaponName ?? "Fists";
+    const rangedWeapon = data.rangedWeaponName ?? "--";
 
     // Position delta (distance between server-confirmed and local predicted)
     const posDeltaX = this.localPos.x - this.serverPos.x;
@@ -122,7 +126,8 @@ export class DebugOverlay {
     this.texts[11].setText(`Aim: ${Phaser.Math.RadToDeg(aim).toFixed(1)}°`);
     this.texts[12].setText(`State: ${comboState}`);
     this.texts[13].setText(`Last Combo: ${lastCombo}  Charge: ${chargeFrames}`);
-    this.texts[14].setText(`Input Buffer (30 frames):`);
+    this.texts[14].setText(`Melee: ${meleeWeapon}  Ranged: ${rangedWeapon}`);
+    this.texts[15].setText(`Input Buffer (30 frames):`);
 
     // Draw input buffer timeline
     this.drawInputBuffer(data.inputBufferHistory ?? []);
@@ -132,7 +137,7 @@ export class DebugOverlay {
     const g = this.bufferGraphics;
     g.clear();
 
-    const startY = 16 * 18 + 4;
+    const startY = 18 * 18 + 4;
     const cellW = 8;
     const cellH = 20;
     const maxFrames = 30;

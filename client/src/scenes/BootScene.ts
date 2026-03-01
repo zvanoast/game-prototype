@@ -88,6 +88,36 @@ export class BootScene extends Phaser.Scene {
     particleGfx.generateTexture("particle", 4, 4);
     particleGfx.destroy();
 
+    // --- Locker closed: 32x32 brown rect with handle ---
+    const lockerClosedGfx = this.add.graphics();
+    lockerClosedGfx.fillStyle(0x8B6914, 1);
+    lockerClosedGfx.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+    lockerClosedGfx.lineStyle(2, 0xAA8833, 1);
+    lockerClosedGfx.strokeRect(1, 1, TILE_SIZE - 2, TILE_SIZE - 2);
+    // Handle detail
+    lockerClosedGfx.fillStyle(0xCCCCCC, 1);
+    lockerClosedGfx.fillRect(TILE_SIZE - 8, TILE_SIZE / 2 - 3, 4, 6);
+    lockerClosedGfx.generateTexture("locker_closed", TILE_SIZE, TILE_SIZE);
+    lockerClosedGfx.destroy();
+
+    // --- Locker open: 32x32 dark rect (empty interior) ---
+    const lockerOpenGfx = this.add.graphics();
+    lockerOpenGfx.fillStyle(0x222222, 1);
+    lockerOpenGfx.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+    lockerOpenGfx.lineStyle(1, 0x555555, 0.8);
+    lockerOpenGfx.strokeRect(1, 1, TILE_SIZE - 2, TILE_SIZE - 2);
+    lockerOpenGfx.generateTexture("locker_open", TILE_SIZE, TILE_SIZE);
+    lockerOpenGfx.destroy();
+
+    // --- Pickup: 16x16 white circle (tinted per weapon at runtime) ---
+    const pickupGfx = this.add.graphics();
+    pickupGfx.fillStyle(0xffffff, 1);
+    pickupGfx.fillCircle(8, 8, 6);
+    pickupGfx.lineStyle(1, 0xffffff, 0.5);
+    pickupGfx.strokeCircle(8, 8, 7);
+    pickupGfx.generateTexture("pickup", 16, 16);
+    pickupGfx.destroy();
+
     console.log("BootScene: placeholder assets generated");
     this.scene.start("GameScene");
   }
