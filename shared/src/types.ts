@@ -22,6 +22,8 @@ export interface InputPayload {
   aimAngle: number;
   /** Bitfield of pressed buttons (see Button enum) */
   buttons: number;
+  /** Frame delta time in seconds (for server to match client's actual timestep) */
+  dt?: number;
 }
 
 // --- Enums ---

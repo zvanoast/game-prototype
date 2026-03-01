@@ -12,11 +12,11 @@ export const ARENA_WIDTH = MAP_WIDTH_PX;
 export const ARENA_HEIGHT = MAP_HEIGHT_PX;
 
 // --- Player ---
-export const PLAYER_SPEED = 200;           // pixels per second (server instant-velocity)
+export const PLAYER_SPEED = 340;           // pixels per second (max speed)
 export const PLAYER_RADIUS = 16;           // collision half-size
 export const MAX_HEALTH = 100;
-export const PLAYER_ACCELERATION = 2000;   // pixels per second² (client-side)
-export const PLAYER_FRICTION = 2000;       // deceleration when no input (client-side)
+export const PLAYER_ACCELERATION = 450;    // pixels per second² — ~0.75s to max speed
+export const PLAYER_FRICTION = 750;        // deceleration when no input — gradual stop
 
 // --- Projectile ---
 export const PROJECTILE_SPEED = 600;       // pixels per second

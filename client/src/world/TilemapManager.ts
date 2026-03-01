@@ -3,42 +3,8 @@ import {
   TILE_SIZE,
   MAP_WIDTH_TILES,
   MAP_HEIGHT_TILES,
+  OBSTACLES,
 } from "shared";
-
-/** Rectangular obstacle definition in tile coordinates */
-interface Obstacle {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-// 18 hardcoded interior obstacles (tile coordinates)
-const OBSTACLES: Obstacle[] = [
-  // Top-left quadrant
-  { x: 8, y: 8, w: 3, h: 1 },
-  { x: 5, y: 14, w: 1, h: 4 },
-  { x: 12, y: 5, w: 2, h: 2 },
-  { x: 15, y: 12, w: 4, h: 1 },
-  // Top-right quadrant
-  { x: 40, y: 6, w: 2, h: 3 },
-  { x: 50, y: 10, w: 3, h: 1 },
-  { x: 55, y: 5, w: 1, h: 5 },
-  { x: 45, y: 15, w: 5, h: 1 },
-  // Bottom-left quadrant
-  { x: 6, y: 45, w: 4, h: 1 },
-  { x: 10, y: 50, w: 1, h: 3 },
-  { x: 15, y: 48, w: 2, h: 2 },
-  { x: 20, y: 55, w: 3, h: 1 },
-  // Bottom-right quadrant
-  { x: 48, y: 48, w: 2, h: 2 },
-  { x: 42, y: 52, w: 1, h: 4 },
-  { x: 55, y: 45, w: 3, h: 1 },
-  { x: 50, y: 55, w: 4, h: 1 },
-  // Center area
-  { x: 30, y: 30, w: 4, h: 4 },
-  { x: 28, y: 25, w: 1, h: 3 },
-];
 
 export class TilemapManager {
   private tilemap!: Phaser.Tilemaps.Tilemap;

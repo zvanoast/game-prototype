@@ -161,18 +161,14 @@ export class ComboDetector {
 
     switch (cond.type) {
       case "direction_tap": {
-        // Check if a direction was tapped (pressed this frame but not last)
+        // Check if a direction was freshly tapped (active this frame, NOT active last frame)
         const axis = cond._axis ?? "dx";
         const sign = cond._sign ?? cond.param;
 
         if (axis === "dx") {
-          const current = frame.dx;
-          // A "tap" means the direction is active in this frame
-          // For double-tap detection we just need the direction to be active
-          return current === sign;
+          return frame.dx === sign && frame.prevDx !== sign;
         } else {
-          const current = frame.dy;
-          return current === sign;
+          return frame.dy === sign && frame.prevDy !== sign;
         }
       }
 

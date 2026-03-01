@@ -16,10 +16,7 @@ import { TestDummy, DUMMY_SPAWN_POSITIONS } from "../entities/TestDummy";
 import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
-  PLAYER_SPEED,
   PLAYER_RADIUS,
-  PLAYER_ACCELERATION,
-  PLAYER_FRICTION,
   CHARGED_SHOT_MIN_FRAMES,
   SHAKE_SHOOT_MAG,
   SHAKE_SHOOT_DURATION,
@@ -29,15 +26,20 @@ import {
   SHAKE_CHARGED_SHOT_DURATION,
   HITSTOP_MELEE_MS,
   HITSTOP_CHARGED_MS,
+  applyMovement,
+  resolveWallCollisions,
+  buildWallRects,
 } from "shared";
 import { Button } from "shared";
-import type { InputPayload } from "shared";
+import type { InputPayload, WallRect } from "shared";
 
 interface PendingInput {
   seq: number;
   dx: number;
   dy: number;
   dt: number;
+  vx: number;
+  vy: number;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -78,6 +80,9 @@ export class GameScene extends Phaser.Scene {
   // Button state tracking
   private attackHeld = false;
 
+  // Wall collision data (shared with server)
+  private wallRects: WallRect[] = [];
+
   // Remote players
   private remotePlayers = new Map<string, Phaser.GameObjects.Sprite>();
   private remoteTargets = new Map<string, { x: number; y: number }>();
@@ -92,6 +97,9 @@ export class GameScene extends Phaser.Scene {
   create() {
     // Create tilemap
     this.tilemapManager = new TilemapManager(this);
+
+    // Pre-compute wall rects for shared collision (matches server)
+    this.wallRects = buildWallRects();
 
     // Set up camera
     this.cameras.main.setBounds(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
@@ -141,6 +149,13 @@ export class GameScene extends Phaser.Scene {
     // Connect to server
     this.network = new NetworkManager();
     this.connectToServer();
+
+    // Artificial latency keys (1-5)
+    this.input.keyboard!.on("keydown-ONE", () => this.network.setArtificialDelay(0));
+    this.input.keyboard!.on("keydown-TWO", () => this.network.setArtificialDelay(50));
+    this.input.keyboard!.on("keydown-THREE", () => this.network.setArtificialDelay(100));
+    this.input.keyboard!.on("keydown-FOUR", () => this.network.setArtificialDelay(200));
+    this.input.keyboard!.on("keydown-FIVE", () => this.network.setArtificialDelay(500));
   }
 
   private spawnLocalPlayer(x: number, y: number) {
@@ -148,13 +163,11 @@ export class GameScene extends Phaser.Scene {
     this.localPlayer.setOrigin(0.5, 0.5);
     this.localPlayer.setDepth(10);
 
-    // Circular physics body
+    // Circular physics body (kept for overlap detection, not for movement)
     const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
     body.setCircle(PLAYER_RADIUS, 0, 0);
     body.setCollideWorldBounds(false);
-
-    // Wall collision
-    this.physics.add.collider(this.localPlayer, this.tilemapManager.getWallLayer());
+    body.moves = false; // We handle all movement — prevent Phaser from applying velocity
 
     // Camera follow with deadzone
     this.cameras.main.startFollow(this.localPlayer, true, 0.08, 0.08);
@@ -324,9 +337,10 @@ export class GameScene extends Phaser.Scene {
         dy,
         aimAngle,
         buttons,
+        dt,
       };
       this.network.sendInput(input);
-      this.pendingInputs.push({ seq: this.inputSeq, dx, dy, dt });
+      this.pendingInputs.push({ seq: this.inputSeq, dx, dy, dt, vx: this.velocityX, vy: this.velocityY });
     } else if (this.offlineMode) {
       this.inputSeq++;
     }
@@ -335,12 +349,17 @@ export class GameScene extends Phaser.Scene {
     if (this.localPlayer) {
       if (dashState) {
         // During dash: override movement with dash velocity
-        const dashVx = Math.cos(dashState.angle) * dashState.speedPerFrame * 60; // convert per-frame to per-second for physics
+        const dashVx = Math.cos(dashState.angle) * dashState.speedPerFrame * 60;
         const dashVy = Math.sin(dashState.angle) * dashState.speedPerFrame * 60;
-        const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
-        body.setVelocity(dashVx, dashVy);
         this.velocityX = dashVx;
         this.velocityY = dashVy;
+
+        // Integrate position manually + wall collision
+        const newX = this.localPlayer.x + dashVx * dt;
+        const newY = this.localPlayer.y + dashVy * dt;
+        const resolved = resolveWallCollisions(newX, newY, PLAYER_RADIUS, this.wallRects);
+        this.localPlayer.x = resolved.x;
+        this.localPlayer.y = resolved.y;
 
         // Make player semi-transparent during dash (invulnerability indicator)
         this.localPlayer.setAlpha(0.5);
@@ -350,11 +369,11 @@ export class GameScene extends Phaser.Scene {
       } else {
         // Normal acceleration movement (blocked during state lock except dash)
         if (!this.stateMachine.isLocked()) {
-          this.applyMovementWithAcceleration(dx, dy, dt);
+          this.applySharedMovement(dx, dy, dt);
           this.stateMachine.setMoving(dx !== 0 || dy !== 0);
         } else {
           // Locked states (combo_executing, etc.) — slow down
-          this.applyMovementWithAcceleration(0, 0, dt);
+          this.applySharedMovement(0, 0, dt);
         }
         this.localPlayer.setAlpha(1);
       }
@@ -405,6 +424,9 @@ export class GameScene extends Phaser.Scene {
       this.minimap.update(this.localPlayer.x, this.localPlayer.y);
     }
 
+    // Flush artificial latency queue
+    this.network.flush();
+
     // Update debug overlay
     const speed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
     this.debugOverlay.update({
@@ -421,6 +443,8 @@ export class GameScene extends Phaser.Scene {
       lastCombo: this.comboDetector.getLastDetected(),
       chargeFrames: this.stateMachine.getChargeFrames(),
       inputBufferHistory: this.inputBuffer.getHistory(30),
+      pendingInputCount: this.pendingInputs.length,
+      artificialLatency: this.network.getArtificialDelay(),
     });
   }
 
@@ -438,44 +462,26 @@ export class GameScene extends Phaser.Scene {
     return dy;
   }
 
-  private applyMovementWithAcceleration(dx: number, dy: number, dt: number) {
+  private applySharedMovement(dx: number, dy: number, dt: number) {
     if (!this.localPlayer) return;
 
-    let ix = dx;
-    let iy = dy;
-    const mag = Math.sqrt(ix * ix + iy * iy);
-    if (mag > 1) {
-      ix /= mag;
-      iy /= mag;
-    }
+    // Use the shared movement function (identical to server)
+    const result = applyMovement(
+      this.localPlayer.x, this.localPlayer.y,
+      this.velocityX, this.velocityY,
+      dx, dy, dt
+    );
 
-    if (mag > 0) {
-      this.velocityX += ix * PLAYER_ACCELERATION * dt;
-      this.velocityY += iy * PLAYER_ACCELERATION * dt;
-    } else {
-      const speed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
-      if (speed > 0) {
-        const frictionAmount = PLAYER_FRICTION * dt;
-        if (frictionAmount >= speed) {
-          this.velocityX = 0;
-          this.velocityY = 0;
-        } else {
-          const ratio = (speed - frictionAmount) / speed;
-          this.velocityX *= ratio;
-          this.velocityY *= ratio;
-        }
-      }
-    }
+    // Resolve wall collisions using shared function
+    const resolved = resolveWallCollisions(result.x, result.y, PLAYER_RADIUS, this.wallRects);
 
-    const currentSpeed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
-    if (currentSpeed > PLAYER_SPEED) {
-      const scale = PLAYER_SPEED / currentSpeed;
-      this.velocityX *= scale;
-      this.velocityY *= scale;
-    }
+    // Zero velocity on axes where collision occurred
+    this.velocityX = Math.abs(resolved.x - result.x) > 0.01 ? 0 : result.vx;
+    this.velocityY = Math.abs(resolved.y - result.y) > 0.01 ? 0 : result.vy;
 
-    const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
-    body.setVelocity(this.velocityX, this.velocityY);
+    // Set position directly on game object — Phaser body syncs automatically
+    this.localPlayer.x = resolved.x;
+    this.localPlayer.y = resolved.y;
   }
 
   private reconcile(serverPlayer: any) {
@@ -489,58 +495,27 @@ export class GameScene extends Phaser.Scene {
       (input) => input.seq > lastProcessed
     );
 
-    const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
-    body.reset(serverPlayer.x, serverPlayer.y);
-    this.velocityX = 0;
-    this.velocityY = 0;
+    // Reset to server-confirmed state
+    let x = serverPlayer.x as number;
+    let y = serverPlayer.y as number;
+    let vx = (serverPlayer.vx as number) ?? 0;
+    let vy = (serverPlayer.vy as number) ?? 0;
 
+    // Replay all unconfirmed inputs using the shared movement function
     for (const input of this.pendingInputs) {
-      this.replayInput(input);
+      const result = applyMovement(x, y, vx, vy, input.dx, input.dy, input.dt);
+      const resolved = resolveWallCollisions(result.x, result.y, PLAYER_RADIUS, this.wallRects);
+
+      vx = Math.abs(resolved.x - result.x) > 0.01 ? 0 : result.vx;
+      vy = Math.abs(resolved.y - result.y) > 0.01 ? 0 : result.vy;
+      x = resolved.x;
+      y = resolved.y;
     }
 
-    body.setVelocity(this.velocityX, this.velocityY);
-  }
+    this.velocityX = vx;
+    this.velocityY = vy;
 
-  private replayInput(input: PendingInput) {
-    if (!this.localPlayer) return;
-
-    let ix = input.dx;
-    let iy = input.dy;
-    const mag = Math.sqrt(ix * ix + iy * iy);
-    if (mag > 1) {
-      ix /= mag;
-      iy /= mag;
-    }
-
-    if (mag > 0) {
-      this.velocityX += ix * PLAYER_ACCELERATION * input.dt;
-      this.velocityY += iy * PLAYER_ACCELERATION * input.dt;
-    } else {
-      const speed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
-      if (speed > 0) {
-        const frictionAmount = PLAYER_FRICTION * input.dt;
-        if (frictionAmount >= speed) {
-          this.velocityX = 0;
-          this.velocityY = 0;
-        } else {
-          const ratio = (speed - frictionAmount) / speed;
-          this.velocityX *= ratio;
-          this.velocityY *= ratio;
-        }
-      }
-    }
-
-    const currentSpeed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
-    if (currentSpeed > PLAYER_SPEED) {
-      const scale = PLAYER_SPEED / currentSpeed;
-      this.velocityX *= scale;
-      this.velocityY *= scale;
-    }
-
-    this.localPlayer.x += this.velocityX * input.dt;
-    this.localPlayer.y += this.velocityY * input.dt;
-
-    this.localPlayer.x = Phaser.Math.Clamp(this.localPlayer.x, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
-    this.localPlayer.y = Phaser.Math.Clamp(this.localPlayer.y, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
+    this.localPlayer.x = x;
+    this.localPlayer.y = y;
   }
 }

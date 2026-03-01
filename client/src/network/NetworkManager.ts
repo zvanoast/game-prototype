@@ -1,10 +1,19 @@
 import { Client, Room } from "colyseus.js";
 import type { InputPayload } from "shared";
 
+interface QueuedMessage {
+  input: InputPayload;
+  sendAt: number; // performance.now() timestamp when this should be sent
+}
+
 export class NetworkManager {
   private client: Client;
   private room: Room | null = null;
   private _onStateChange: ((state: any) => void) | null = null;
+
+  // Artificial latency
+  private artificialDelayMs = 0;
+  private delayQueue: QueuedMessage[] = [];
 
   constructor() {
     // Connect directly to Colyseus server
@@ -28,9 +37,50 @@ export class NetworkManager {
   }
 
   sendInput(input: InputPayload) {
-    if (this.room) {
+    if (!this.room) return;
+
+    if (this.artificialDelayMs <= 0) {
+      // No delay — send immediately
       this.room.send("input", input);
+    } else {
+      // Queue with delay
+      this.delayQueue.push({
+        input,
+        sendAt: performance.now() + this.artificialDelayMs,
+      });
     }
+  }
+
+  /**
+   * Flush the delay queue — call every frame from GameScene.update().
+   * Sends all queued inputs whose delay has elapsed.
+   */
+  flush() {
+    if (this.delayQueue.length === 0 || !this.room) return;
+
+    const now = performance.now();
+    let i = 0;
+    while (i < this.delayQueue.length) {
+      if (this.delayQueue[i].sendAt <= now) {
+        this.room.send("input", this.delayQueue[i].input);
+        this.delayQueue.splice(i, 1);
+      } else {
+        i++;
+      }
+    }
+  }
+
+  /**
+   * Set artificial latency for outgoing inputs (in milliseconds).
+   * Use 0 to disable. Useful for testing prediction/reconciliation.
+   */
+  setArtificialDelay(ms: number) {
+    this.artificialDelayMs = Math.max(0, ms);
+    console.log(`Artificial latency set to ${this.artificialDelayMs}ms`);
+  }
+
+  getArtificialDelay(): number {
+    return this.artificialDelayMs;
   }
 
   onStateChange(callback: (state: any) => void) {

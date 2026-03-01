@@ -14,6 +14,9 @@ export interface InputFrame {
   buttons: number;
   /** Previous frame's button bitfield (for press/release detection) */
   prevButtons: number;
+  /** Previous frame's movement axes (for direction tap detection) */
+  prevDx: number;
+  prevDy: number;
   /** Aim angle in radians */
   aimAngle: number;
 }
@@ -28,6 +31,8 @@ export class InputBuffer {
   private count = 0;
   private frameCounter = 0;
   private lastButtons = 0;
+  private lastDx = 0;
+  private lastDy = 0;
 
   constructor(private size: number = INPUT_BUFFER_SIZE) {
     this.buffer = new Array(size);
@@ -42,6 +47,8 @@ export class InputBuffer {
       dy,
       buttons,
       prevButtons: this.lastButtons,
+      prevDx: this.lastDx,
+      prevDy: this.lastDy,
       aimAngle,
     };
 
@@ -50,6 +57,8 @@ export class InputBuffer {
     if (this.count < this.size) this.count++;
 
     this.lastButtons = buttons;
+    this.lastDx = dx;
+    this.lastDy = dy;
   }
 
   /** Get the most recent frame, or null if empty */

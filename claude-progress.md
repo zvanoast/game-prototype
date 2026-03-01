@@ -39,4 +39,28 @@
 - SoundManager: placeholder console.log for all combat events (shoot, melee, dash, death, etc.)
 - All juice events wired via Phaser event system for decoupled architecture
 
-## Phase 3: TBD
+## Phase 3A: Server-Authoritative Movement — COMPLETE
+
+### Shared Movement & Collision
+- `shared/src/movement.ts` — pure `applyMovement()` function (acceleration, friction, speed clamping) used by both client and server
+- `shared/src/collision.ts` — pure `resolveWallCollisions()` circle-vs-AABB collision, no Phaser dependency
+- `shared/src/map-data.ts` — `OBSTACLES` array and `buildWallRects()` pre-computation, imported by both client TilemapManager and server GameRoom
+- `InputPayload.dt` added so server uses client's actual frame delta for movement
+
+### Server Upgrades
+- `PlayerSchema` now has `vx`, `vy` float32 fields for velocity tracking across ticks
+- `GameRoom.tick()` uses shared `applyMovement()` + `resolveWallCollisions()` instead of instant-velocity
+- Wall collisions zero velocity on colliding axis (no sliding through walls)
+- Safe spawn: rejects positions overlapping walls (up to 50 attempts)
+
+### Client Upgrades
+- `GameScene` uses shared `applyMovement()` + `resolveWallCollisions()` for both live movement and input replay during reconciliation
+- Reconciliation starts from server's confirmed velocity (`vx`, `vy`) instead of resetting to zero
+- Pending inputs now store `vx`/`vy` for accurate replay
+
+### Artificial Latency Testing
+- `NetworkManager` delay queue: `setArtificialDelay(ms)` + `flush()` pattern
+- Number keys 1-5 set 0/50/100/200/500ms artificial latency
+- Debug overlay shows: prediction delta distance, pending input count, artificial latency setting
+
+## Phase 3B: TBD

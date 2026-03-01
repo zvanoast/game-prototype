@@ -3,6 +3,8 @@ import { Schema, type, MapSchema } from "@colyseus/schema";
 export class PlayerSchema extends Schema {
   @type("float32") x: number = 0;
   @type("float32") y: number = 0;
+  @type("float32") vx: number = 0;
+  @type("float32") vy: number = 0;
   @type("float32") angle: number = 0;
   @type("int16") health: number = 100;
   @type("string") state: string = "idle";
