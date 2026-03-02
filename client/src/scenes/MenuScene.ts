@@ -1,13 +1,28 @@
 import Phaser from "phaser";
+import { CHARACTER_DEFS } from "./BootScene";
 
 const STORAGE_KEY = "storage_wars_nickname";
+const CHAR_STORAGE_KEY = "storage_wars_character";
 const MAX_NICK_LENGTH = 16;
+const TAKEN_POLL_MS = 2000;
 
 export class MenuScene extends Phaser.Scene {
   private nicknameInput: Phaser.GameObjects.DOMElement | null = null;
   private playButton!: Phaser.GameObjects.Text;
   private howToPlayPanel!: Phaser.GameObjects.Container;
   private howToPlayVisible = false;
+  private selectedCharIndex = 0;
+  private charHighlight!: Phaser.GameObjects.Graphics;
+  private charNameLabel!: Phaser.GameObjects.Text;
+
+  // Character picker sprites + layout params (for updating taken state)
+  private charSprites: Phaser.GameObjects.Sprite[] = [];
+  private charStartX = 0;
+  private charY = 0;
+  private charPreviewSize = 48;
+  private charGap = 6;
+  private takenSet = new Set<number>();
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     super({ key: "MenuScene" });
@@ -15,10 +30,18 @@ export class MenuScene extends Phaser.Scene {
 
   create() {
     const centerX = this.cameras.main.width / 2;
-    const centerY = this.cameras.main.height / 2;
+
+    // Restore saved character selection
+    const savedCharIdx = parseInt(localStorage.getItem(CHAR_STORAGE_KEY) ?? "0", 10);
+    this.selectedCharIndex = (savedCharIdx >= 0 && savedCharIdx < CHARACTER_DEFS.length)
+      ? savedCharIdx : 0;
+
+    // Reset per-scene state
+    this.charSprites = [];
+    this.takenSet.clear();
 
     // Title
-    this.add.text(centerX, 80, "STORAGE WARS", {
+    this.add.text(centerX, 60, "STORAGE WARS", {
       fontSize: "48px",
       fontFamily: "monospace",
       color: "#ffcc00",
@@ -26,14 +49,14 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5, 0.5);
 
     // Subtitle
-    this.add.text(centerX, 120, "No Relation", {
+    this.add.text(centerX, 96, "No Relation", {
       fontSize: "16px",
       fontFamily: "monospace",
       color: "#aaaaaa",
     }).setOrigin(0.5, 0.5);
 
     // Nickname label
-    this.add.text(centerX, 190, "NICKNAME", {
+    this.add.text(centerX, 145, "NICKNAME", {
       fontSize: "14px",
       fontFamily: "monospace",
       color: "#cccccc",
@@ -70,10 +93,73 @@ export class MenuScene extends Phaser.Scene {
       }
     });
 
-    this.nicknameInput = this.add.dom(centerX, 220, inputEl);
+    this.nicknameInput = this.add.dom(centerX, 175, inputEl);
 
-    // Play button
-    this.playButton = this.add.text(centerX, 290, "PLAY", {
+    // ─── Character selection ────────────────────────────────────────────
+    this.add.text(centerX, 220, "CHARACTER", {
+      fontSize: "14px",
+      fontFamily: "monospace",
+      color: "#cccccc",
+    }).setOrigin(0.5, 0.5);
+
+    const previewSize = this.charPreviewSize;
+    const gap = this.charGap;
+    const totalWidth = CHARACTER_DEFS.length * previewSize + (CHARACTER_DEFS.length - 1) * gap;
+    const startX = centerX - totalWidth / 2 + previewSize / 2;
+    const charY = 260;
+    this.charStartX = startX;
+    this.charY = charY;
+
+    // Yellow highlight border (drawn behind the selected character)
+    this.charHighlight = this.add.graphics();
+    this.charHighlight.setDepth(0);
+
+    // Character name label below the row
+    this.charNameLabel = this.add.text(centerX, charY + previewSize / 2 + 14, "", {
+      fontSize: "12px",
+      fontFamily: "monospace",
+      color: "#ffcc00",
+    }).setOrigin(0.5, 0.5);
+
+    for (let i = 0; i < CHARACTER_DEFS.length; i++) {
+      const px = startX + i * (previewSize + gap);
+      const texKey = `char_preview_${i}`;
+      if (!this.textures.exists(texKey)) {
+        this.charSprites.push(null as any); // placeholder to keep index alignment
+        continue;
+      }
+
+      const sprite = this.add.sprite(px, charY, texKey);
+      sprite.setOrigin(0.5, 0.5);
+      sprite.setDepth(1);
+      sprite.setInteractive({ useHandCursor: true });
+
+      sprite.on("pointerup", () => {
+        if (this.takenSet.has(i)) return; // can't select taken characters
+        this.selectedCharIndex = i;
+        localStorage.setItem(CHAR_STORAGE_KEY, String(i));
+        this.refreshCharacterRow();
+      });
+
+      sprite.on("pointerover", () => {
+        if (this.takenSet.has(i)) return;
+        if (i !== this.selectedCharIndex) {
+          sprite.setAlpha(0.8);
+        }
+      });
+      sprite.on("pointerout", () => {
+        if (this.takenSet.has(i)) return;
+        sprite.setAlpha(1);
+      });
+
+      this.charSprites.push(sprite);
+    }
+
+    // Draw initial highlight
+    this.refreshCharacterRow();
+
+    // ─── Play button ────────────────────────────────────────────────────
+    this.playButton = this.add.text(centerX, 340, "PLAY", {
       fontSize: "28px",
       fontFamily: "monospace",
       color: "#000000",
@@ -98,7 +184,7 @@ export class MenuScene extends Phaser.Scene {
     });
 
     // How to Play toggle button
-    const howBtn = this.add.text(centerX, 350, "HOW TO PLAY", {
+    const howBtn = this.add.text(centerX, 400, "HOW TO PLAY", {
       fontSize: "14px",
       fontFamily: "monospace",
       color: "#aaaaaa",
@@ -130,7 +216,7 @@ export class MenuScene extends Phaser.Scene {
     });
     controlsText.setOrigin(0.5, 0.5);
 
-    this.howToPlayPanel = this.add.container(centerX, 460, [panelBg, controlsText]);
+    this.howToPlayPanel = this.add.container(centerX, 510, [panelBg, controlsText]);
     this.howToPlayPanel.setVisible(false);
 
     // Test Mode button (small, bottom-right)
@@ -152,13 +238,81 @@ export class MenuScene extends Phaser.Scene {
       color: "#555555",
     }).setOrigin(0.5, 0.5);
 
-    // Clean up DOM on scene shutdown
+    // Fetch taken characters immediately, then poll
+    this.fetchTakenCharacters();
+    this.pollTimer = setInterval(() => this.fetchTakenCharacters(), TAKEN_POLL_MS);
+
+    // Clean up DOM + poll timer on scene shutdown
     this.events.on("shutdown", () => {
       if (this.nicknameInput) {
         this.nicknameInput.destroy();
         this.nicknameInput = null;
       }
+      if (this.pollTimer !== null) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = null;
+      }
     });
+  }
+
+  // ─── Taken character polling ──────────────────────────────────────────
+
+  private async fetchTakenCharacters() {
+    try {
+      const resp = await fetch("http://localhost:3001/api/taken-characters");
+      const data = await resp.json();
+      const arr: number[] = Array.isArray(data.taken) ? data.taken : [];
+      this.takenSet = new Set(arr);
+    } catch {
+      // Server unreachable — treat all as available
+      this.takenSet.clear();
+    }
+    this.refreshCharacterRow();
+  }
+
+  // ─── Character row rendering ──────────────────────────────────────────
+
+  private refreshCharacterRow() {
+    // If current selection is taken, auto-select first available
+    if (this.takenSet.has(this.selectedCharIndex)) {
+      for (let i = 0; i < CHARACTER_DEFS.length; i++) {
+        if (!this.takenSet.has(i)) {
+          this.selectedCharIndex = i;
+          localStorage.setItem(CHAR_STORAGE_KEY, String(i));
+          break;
+        }
+      }
+    }
+
+    // Update sprite appearances
+    for (let i = 0; i < this.charSprites.length; i++) {
+      const sprite = this.charSprites[i];
+      if (!sprite) continue;
+
+      if (this.takenSet.has(i)) {
+        // Taken: grayed out, semi-transparent, no hand cursor
+        sprite.setTint(0x444444);
+        sprite.setAlpha(0.4);
+        sprite.disableInteractive();
+        sprite.setInteractive({ useHandCursor: false });
+      } else {
+        // Available: full color
+        sprite.clearTint();
+        sprite.setAlpha(1);
+        sprite.disableInteractive();
+        sprite.setInteractive({ useHandCursor: true });
+      }
+    }
+
+    // Redraw highlight on selected character
+    this.charHighlight.clear();
+    if (!this.takenSet.has(this.selectedCharIndex)) {
+      const px = this.charStartX + this.selectedCharIndex * (this.charPreviewSize + this.charGap);
+      const half = this.charPreviewSize / 2 + 3;
+      this.charHighlight.lineStyle(2, 0xffcc00, 1);
+      this.charHighlight.strokeRect(px - half, this.charY - half, half * 2, half * 2);
+    }
+    this.charNameLabel.setText(CHARACTER_DEFS[this.selectedCharIndex].name);
   }
 
   private onPlay() {
@@ -173,7 +327,7 @@ export class MenuScene extends Phaser.Scene {
     this.nicknameInput.destroy();
     this.nicknameInput = null;
 
-    this.scene.start("GameScene", { nickname });
+    this.scene.start("GameScene", { nickname, characterIndex: this.selectedCharIndex });
   }
 
   private onTestMode() {
@@ -182,7 +336,7 @@ export class MenuScene extends Phaser.Scene {
       this.nicknameInput.destroy();
       this.nicknameInput = null;
     }
-    this.scene.start("GameScene", { nickname: "Dev", testMode: true });
+    this.scene.start("GameScene", { nickname: "Dev", testMode: true, characterIndex: this.selectedCharIndex });
   }
 
   private toggleHowToPlay() {

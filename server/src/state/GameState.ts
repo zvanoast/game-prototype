@@ -30,6 +30,7 @@ export class PlayerSchema extends Schema {
   @type("int16") shieldHp: number = 0;
   @type("float32") speedMultiplier: number = 1.0;
   @type("float32") damageMultiplier: number = 1.0;
+  @type("uint8") characterIndex: number = 0;
 }
 
 export class LockerSchema extends Schema {

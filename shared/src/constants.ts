@@ -98,3 +98,4 @@ export const CONSUMABLE_SPAWN_CHANCE = 0.3;  // 30% chance locker has consumable
 // --- Network ---
 export const SERVER_PORT = 3001;
 export const MAX_PLAYERS_PER_ROOM = 20;
+export const CHARACTER_COUNT = 9;

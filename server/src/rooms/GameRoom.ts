@@ -10,6 +10,7 @@ import {
   PLAYER_RADIUS,
   MAX_HEALTH,
   MAX_PLAYERS_PER_ROOM,
+  CHARACTER_COUNT,
   DASH_DISTANCE,
   DASH_DURATION_FRAMES,
   CONSUMABLE_USE_COOLDOWN_MS,
@@ -42,6 +43,10 @@ export class GameRoom extends Room<GameStateSchema> {
 
   // Per-player consumable use cooldown (ms remaining)
   private consumableCooldowns = new Map<string, number>();
+
+  // Taken character indices (enforces unique character per room)
+  // Public so the REST API can read it
+  takenCharacters = new Set<number>();
 
   // Dash constants (derived from shared)
   private static DASH_DURATION_S = DASH_DURATION_FRAMES / 60;
@@ -115,12 +120,32 @@ export class GameRoom extends Room<GameStateSchema> {
     console.log(`GameRoom created. Tick rate: ${TICK_RATE}Hz, wallRects: ${this.wallRects.length}, lockers: ${this.state.lockers.length}`);
   }
 
-  onJoin(client: Client, options?: { nickname?: string }) {
+  onJoin(client: Client, options?: { nickname?: string; characterIndex?: number }) {
     const player = new PlayerSchema();
 
     // Sanitize and set display name
     const raw = (options?.nickname ?? "").trim().substring(0, 16);
     player.displayName = raw || `Player ${client.sessionId.substring(0, 4)}`;
+
+    // Assign character — honour request if available, otherwise pick next free
+    const requested = (typeof options?.characterIndex === "number" &&
+      options.characterIndex >= 0 && options.characterIndex < CHARACTER_COUNT)
+      ? options.characterIndex : 0;
+
+    if (!this.takenCharacters.has(requested)) {
+      player.characterIndex = requested;
+    } else {
+      // Find the first available character index
+      let assigned = 0;
+      for (let i = 0; i < CHARACTER_COUNT; i++) {
+        if (!this.takenCharacters.has(i)) {
+          assigned = i;
+          break;
+        }
+      }
+      player.characterIndex = assigned;
+    }
+    this.takenCharacters.add(player.characterIndex);
 
     // Find a valid spawn position that doesn't overlap walls
     const pos = this.findSafeSpawn();
@@ -137,10 +162,16 @@ export class GameRoom extends Room<GameStateSchema> {
     this.buffSystem.registerPlayer(client.sessionId);
     this.matchSystem.onPlayerJoin(client.sessionId);
     this.prevButtons.set(client.sessionId, 0);
-    console.log(`Player joined: ${client.sessionId} at (${player.x.toFixed(0)}, ${player.y.toFixed(0)})`);
+    console.log(`Player joined: ${client.sessionId} as character ${player.characterIndex} at (${player.x.toFixed(0)}, ${player.y.toFixed(0)})`);
   }
 
   onLeave(client: Client) {
+    // Release character index before removing player
+    const player = this.state.players.get(client.sessionId);
+    if (player) {
+      this.takenCharacters.delete(player.characterIndex);
+    }
+
     this.lootSystem.unregisterPlayer(client.sessionId);
     this.combatSystem.unregisterPlayer(client.sessionId);
     this.buffSystem.unregisterPlayer(client.sessionId);

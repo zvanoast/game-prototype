@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { CHARACTER_DEFS, buildPlayerSheet } from "./BootScene";
 import { NetworkManager } from "../network/NetworkManager";
 import { DebugOverlay } from "../ui/DebugOverlay";
 import { Minimap } from "../ui/Minimap";
@@ -131,6 +132,8 @@ export class GameScene extends Phaser.Scene {
 
   // Nickname passed from MenuScene
   private nickname = "";
+  // Selected character index (from CHARACTER_DEFS)
+  private characterIndex = 0;
 
   // Button state tracking
   private attackHeld = false;
@@ -143,6 +146,7 @@ export class GameScene extends Phaser.Scene {
   private remotePlayers = new Map<string, Phaser.GameObjects.Sprite>();
   private remoteTargets = new Map<string, RemotePlayerData>();
   private remoteHealthBars = new Map<string, Phaser.GameObjects.Graphics>();
+  private remoteCharIndices = new Map<string, number>();
 
   // Server projectile sprites (keyed by projectile id)
   private serverProjectileSprites = new Map<number, Phaser.GameObjects.Sprite>();
@@ -176,9 +180,10 @@ export class GameScene extends Phaser.Scene {
   // Test mode (offline, skips server connection)
   private testMode = false;
 
-  init(data: { nickname?: string; testMode?: boolean } = {}) {
+  init(data: { nickname?: string; testMode?: boolean; characterIndex?: number } = {}) {
     this.nickname = data.nickname ?? "";
     this.testMode = data.testMode ?? false;
+    this.characterIndex = data.characterIndex ?? 0;
   }
 
   create() {
@@ -212,6 +217,7 @@ export class GameScene extends Phaser.Scene {
     this.remotePlayers.clear();
     this.remoteTargets.clear();
     this.remoteHealthBars.clear();
+    this.remoteCharIndices.clear();
     this.serverProjectileSprites.clear();
     this.serverProjectileTrailCleanups.clear();
     this.lockerSprites.clear();
@@ -219,6 +225,39 @@ export class GameScene extends Phaser.Scene {
     this.pickupWeaponIds.clear();
     this.hoveredPickupId = null;
     this.dummies = [];
+
+    // Rebuild player_sheet from chosen character (destroys old texture, re-registers frames)
+    const chosenFrame = CHARACTER_DEFS[this.characterIndex]?.frame ?? CHARACTER_DEFS[0].frame;
+    buildPlayerSheet(this, chosenFrame);
+    // Re-register animations so they reference the rebuilt texture
+    this.anims.remove("player_idle");
+    this.anims.remove("player_walk");
+    this.anims.remove("player_attack");
+    this.anims.remove("player_death");
+    this.anims.create({
+      key: "player_idle",
+      frames: this.anims.generateFrameNumbers("player_sheet", { start: 0, end: 1 }),
+      frameRate: 2,
+      repeat: -1,
+    });
+    this.anims.create({
+      key: "player_walk",
+      frames: this.anims.generateFrameNumbers("player_sheet", { start: 2, end: 5 }),
+      frameRate: 8,
+      repeat: -1,
+    });
+    this.anims.create({
+      key: "player_attack",
+      frames: this.anims.generateFrameNumbers("player_sheet", { start: 6, end: 7 }),
+      frameRate: 12,
+      repeat: 0,
+    });
+    this.anims.create({
+      key: "player_death",
+      frames: this.anims.generateFrameNumbers("player_sheet", { start: 8, end: 10 }),
+      frameRate: 6,
+      repeat: 0,
+    });
 
     // Create tilemap
     this.tilemapManager = new TilemapManager(this);
@@ -364,7 +403,6 @@ export class GameScene extends Phaser.Scene {
     this.localPlayer = this.physics.add.sprite(x, y, "player_sheet");
     this.localPlayer.setOrigin(0.5, 0.5);
     this.localPlayer.setDepth(10);
-    this.localPlayer.setTint(0x00ff88);
     this.localPlayer.play("player_idle");
 
     // Circular physics body (kept for overlap detection, not for movement)
@@ -456,7 +494,10 @@ export class GameScene extends Phaser.Scene {
 
   private async connectToServer() {
     const roomType = this.testMode ? "sandbox" : "game";
-    const options: Record<string, unknown> = { nickname: this.nickname };
+    const options: Record<string, unknown> = {
+      nickname: this.nickname,
+      characterIndex: this.characterIndex,
+    };
     if (this.testMode) options.sandbox = true;
 
     try {
@@ -505,6 +546,23 @@ export class GameScene extends Phaser.Scene {
         this.playerNames.set(sessionId, name);
 
         if (sessionId === room.sessionId) {
+          // If server reassigned character (requested was taken), rebuild player sheet
+          const serverCharIdx = player.characterIndex ?? 0;
+          if (serverCharIdx !== this.characterIndex) {
+            this.characterIndex = serverCharIdx;
+            const newFrame = CHARACTER_DEFS[serverCharIdx]?.frame ?? CHARACTER_DEFS[0].frame;
+            buildPlayerSheet(this, newFrame);
+            this.anims.remove("player_idle");
+            this.anims.remove("player_walk");
+            this.anims.remove("player_attack");
+            this.anims.remove("player_death");
+            this.anims.create({ key: "player_idle", frames: this.anims.generateFrameNumbers("player_sheet", { start: 0, end: 1 }), frameRate: 2, repeat: -1 });
+            this.anims.create({ key: "player_walk", frames: this.anims.generateFrameNumbers("player_sheet", { start: 2, end: 5 }), frameRate: 8, repeat: -1 });
+            this.anims.create({ key: "player_attack", frames: this.anims.generateFrameNumbers("player_sheet", { start: 6, end: 7 }), frameRate: 12, repeat: 0 });
+            this.anims.create({ key: "player_death", frames: this.anims.generateFrameNumbers("player_sheet", { start: 8, end: 10 }), frameRate: 6, repeat: 0 });
+            console.log(`Character reassigned by server: ${serverCharIdx} (${CHARACTER_DEFS[serverCharIdx]?.name})`);
+          }
+
           this.spawnLocalPlayer(player.x, player.y);
           this.localHealth = player.health;
           this.localShieldHp = player.shieldHp ?? 0;
@@ -523,11 +581,15 @@ export class GameScene extends Phaser.Scene {
           }
           console.log("Local player spawned", this.localEliminated ? "(eliminated, spectating)" : "");
         } else {
-          const sprite = this.add.sprite(player.x, player.y, "player_sheet");
+          // Use server-assigned character's spritesheet for remote player
+          const charIdx = player.characterIndex ?? 0;
+          const sheetKey = `player_sheet_${charIdx}`;
+          const hasSheet = this.textures.exists(sheetKey);
+          const sprite = this.add.sprite(player.x, player.y, hasSheet ? sheetKey : "player_sheet");
           sprite.setOrigin(0.5, 0.5);
           sprite.setDepth(9);
-          sprite.setTint(0xff4444);
-          sprite.play("player_idle");
+          sprite.play(hasSheet ? `player_idle_${charIdx}` : "player_idle");
+          this.remoteCharIndices.set(sessionId, charIdx);
           this.remotePlayers.set(sessionId, sprite);
           this.remoteTargets.set(sessionId, {
             x: player.x,
@@ -614,6 +676,7 @@ export class GameScene extends Phaser.Scene {
           hpBar.destroy();
           this.remoteHealthBars.delete(sessionId);
         }
+        this.remoteCharIndices.delete(sessionId);
         this.playerNames.delete(sessionId);
 
         // If spectating this player, cycle to next
@@ -1110,16 +1173,22 @@ export class GameScene extends Phaser.Scene {
         sprite.y = Phaser.Math.Linear(sprite.y, target.y, lerpFactor);
         sprite.setRotation(target.angle);
 
-        // Death state: fade out + death animation
+        // Death state: fade out + death animation (use per-character anims)
+        const ci = this.remoteCharIndices.get(sessionId) ?? 0;
+        const hasCharAnims = this.anims.exists(`player_idle_${ci}`);
+        const idleKey = hasCharAnims ? `player_idle_${ci}` : "player_idle";
+        const walkKey = hasCharAnims ? `player_walk_${ci}` : "player_walk";
+        const deathKey = hasCharAnims ? `player_death_${ci}` : "player_death";
+
         if (target.state === "dead") {
           sprite.setAlpha(0.3);
-          sprite.play("player_death", true);
+          sprite.play(deathKey, true);
         } else if (target.state === "moving") {
           sprite.setAlpha(1);
-          sprite.play("player_walk", true);
+          sprite.play(walkKey, true);
         } else {
           sprite.setAlpha(1);
-          sprite.play("player_idle", true);
+          sprite.play(idleKey, true);
         }
 
         // Update health bar (with shield)
@@ -1136,7 +1205,7 @@ export class GameScene extends Phaser.Scene {
         } else if (target.shieldHp > 0) {
           sprite.setTint(0xcc88ff); // purple tint for shield
         } else {
-          sprite.setTint(0xff4444); // default enemy tint
+          sprite.clearTint(); // Kenney sprites have their own colors
         }
       }
     });
@@ -1256,6 +1325,7 @@ export class GameScene extends Phaser.Scene {
     if (this.textures.exists(key)) return key;
     return "pickup";
   }
+
 
   /** Build scoreboard entries from current room state */
   private getScoreboardEntries(): ScoreboardEntry[] {

@@ -311,3 +311,35 @@
 - **Golf Club** (melee): 30 dmg, 64 range, 50° arc, 600ms CD, high knockback — long reach, narrow
 - **Vase** (ranged): 35 dmg, 300 speed, 350 range, 5 radius, 800ms rate — heavy, short range, big projectile
 - **Rubber Band Gun** (ranged): 4 dmg, 900 speed, 700 range, 1 radius, 80ms rate — rapid-fire spam
+
+## Character Selection from Menu — COMPLETE
+
+### Shared Character Data
+- `CHARACTER_DEFS` exported from BootScene: 9 characters (Blue, Hitman, Soldier, Survivor, Brown, Veteran, Green, Robot, Zombie) from Kenney atlas
+- `buildPlayerSheet()` extracted as reusable function: builds 11-frame player spritesheet from any Kenney atlas frame, supports texture destruction and rebuild
+
+### BootScene Changes
+- `generateCharacterPreviews()`: generates 9 `char_preview_0..8` textures (48×48) for menu display
+- `generateRemoteSkins()`: now generates skins for all 9 characters (was 8), indexed by CHARACTER_DEFS
+- `generatePlayerSheet()`: delegates to shared `buildPlayerSheet()` utility
+
+### MenuScene — Character Picker
+- 9 clickable character previews in horizontal row between nickname input and PLAY button
+- Yellow highlight border on selected character, character name label below
+- Selection persisted in `localStorage` key `storage_wars_character`
+- `characterIndex` passed in scene data to GameScene (and test mode)
+- UI repositioned: elements shifted to accommodate character row
+
+### Server-Side Character Uniqueness
+- `PlayerSchema.characterIndex` (uint8) — synced to all clients
+- `shared/src/constants.ts` — `CHARACTER_COUNT = 9`
+- `GameRoom.onJoin()` validates requested character; if taken, assigns next available index
+- `GameRoom.takenCharacters` Set tracks occupied indices; released in `onLeave()`
+
+### GameScene Changes
+- `init()` accepts `characterIndex` (default 0)
+- `create()` rebuilds `player_sheet` texture from chosen character's atlas frame before spawning
+- Animations re-registered after texture rebuild (player_idle, player_walk, player_attack, player_death)
+- On local player join: reads `player.characterIndex` from server; if different from requested, rebuilds player_sheet again
+- Remote players use `player.characterIndex` directly from schema (no more hash-based assignment)
+- Removed `getRemoteSkinIndex()` — uniqueness is enforced server-side
