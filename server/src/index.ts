@@ -19,6 +19,7 @@ const gameServer = new Server({
 
 // Register rooms
 gameServer.define("game", GameRoom);
+gameServer.define("sandbox", GameRoom);
 
 // Colyseus monitor (dev tool)
 app.use("/monitor", monitor());

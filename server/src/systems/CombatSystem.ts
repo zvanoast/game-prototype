@@ -12,6 +12,8 @@ import {
   CHARGED_SHOT_DAMAGE_MULT,
   CHARGED_SHOT_SIZE,
   CHARGED_SHOT_MIN_FRAMES,
+  DASH_STRIKE_RANGE_MULT,
+  DASH_STRIKE_DAMAGE_MULT,
   TICK_RATE,
 } from "shared";
 import { Button } from "shared";
@@ -140,9 +142,12 @@ export class CombatSystem {
       combat.chargeFrameCount = 0;
     }
 
-    // Melee pressed
+    // Melee pressed — enhanced if dashing (dash strike)
     if (meleePressed && (tick - combat.lastMeleeTick >= meleeCooldownTicks)) {
-      this.performMelee(sessionId, player, tick, meleeConfig);
+      const isDashing = player.state === "dashing";
+      const rangeMult = isDashing ? DASH_STRIKE_RANGE_MULT : 1;
+      const damageMult = isDashing ? DASH_STRIKE_DAMAGE_MULT : 1;
+      this.performMelee(sessionId, player, tick, meleeConfig, rangeMult, damageMult);
       combat.lastMeleeTick = tick;
     }
 
@@ -198,12 +203,14 @@ export class CombatSystem {
     sessionId: string,
     attacker: PlayerSchema,
     _tick: number,
-    meleeConfig: import("shared").WeaponConfig
+    meleeConfig: import("shared").WeaponConfig,
+    rangeMult = 1,
+    damageMult = 1
   ) {
     const arcDeg = meleeConfig.meleeArcDegrees ?? 90;
     const arcHalf = (arcDeg / 2) * (Math.PI / 180);
-    const range = meleeConfig.meleeRange ?? 36;
-    const damage = meleeConfig.meleeDamage ?? 10;
+    const range = (meleeConfig.meleeRange ?? 36) * rangeMult;
+    const damage = Math.round((meleeConfig.meleeDamage ?? 10) * damageMult);
 
     let hitAny = false;
 

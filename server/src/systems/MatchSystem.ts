@@ -20,6 +20,7 @@ export class MatchSystem {
   private countdownTimer = 0;
   private postMatchTimer = 0;
   private findSafeSpawn: () => { x: number; y: number };
+  private sandbox = false;
 
   constructor(
     room: Room<GameStateSchema>,
@@ -33,6 +34,12 @@ export class MatchSystem {
     this.findSafeSpawn = findSafeSpawn;
   }
 
+  /** Enable sandbox mode — skips match lifecycle, allows free play */
+  enableSandbox() {
+    this.sandbox = true;
+    this.setPhase("sandbox");
+  }
+
   /** Must be called after CombatSystem is created */
   setCombatSystem(combatSystem: CombatSystem) {
     this.combatSystem = combatSystem;
@@ -43,11 +50,13 @@ export class MatchSystem {
   }
 
   canAttack(): boolean {
-    return this.phase === "waiting" || this.phase === "playing";
+    return this.phase === "waiting" || this.phase === "playing" || this.phase === "sandbox";
   }
 
   /** Called each server tick */
   tick(dtMs: number) {
+    if (this.sandbox) return; // No phase transitions in sandbox
+
     switch (this.phase) {
       case "waiting":
         this.tickWaiting();
@@ -67,6 +76,12 @@ export class MatchSystem {
   onPlayerJoin(sessionId: string) {
     const player = this.state.players.get(sessionId);
     if (!player) return;
+
+    if (this.sandbox) {
+      player.eliminated = false;
+      this.updateAliveCount();
+      return;
+    }
 
     if (this.phase === "waiting" || this.phase === "countdown") {
       player.eliminated = false;
@@ -99,6 +114,12 @@ export class MatchSystem {
   onPlayerKilled(victimId: string, killerId: string, weaponName: string) {
     const victim = this.state.players.get(victimId);
     if (!victim) return;
+
+    if (this.sandbox) {
+      // Sandbox: no elimination, just broadcast the kill event
+      // CombatSystem handles respawn via normal respawn timer
+      return;
+    }
 
     victim.eliminated = true;
 

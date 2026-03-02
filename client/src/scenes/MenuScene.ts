@@ -26,7 +26,7 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5, 0.5);
 
     // Subtitle
-    this.add.text(centerX, 120, "Last Man Standing", {
+    this.add.text(centerX, 120, "No Relation", {
       fontSize: "16px",
       fontFamily: "monospace",
       color: "#aaaaaa",
@@ -118,7 +118,7 @@ export class MenuScene extends Phaser.Scene {
       "LMB          Shoot",
       "RMB          Melee",
       "E            Interact (lockers)",
-      "Double-tap   Dash",
+      "SPACE        Dash",
       "Hold LMB     Charged shot",
     ];
 
@@ -132,6 +132,18 @@ export class MenuScene extends Phaser.Scene {
 
     this.howToPlayPanel = this.add.container(centerX, 460, [panelBg, controlsText]);
     this.howToPlayPanel.setVisible(false);
+
+    // Test Mode button (small, bottom-right)
+    const testBtn = this.add.text(this.cameras.main.width - 16, this.cameras.main.height - 20, "TEST MODE", {
+      fontSize: "12px",
+      fontFamily: "monospace",
+      color: "#666666",
+    });
+    testBtn.setOrigin(1, 0.5);
+    testBtn.setInteractive({ useHandCursor: true });
+    testBtn.on("pointerover", () => testBtn.setColor("#ffcc00"));
+    testBtn.on("pointerout", () => testBtn.setColor("#666666"));
+    testBtn.on("pointerup", () => this.onTestMode());
 
     // Version/footer
     this.add.text(centerX, this.cameras.main.height - 20, "Prototype Build", {
@@ -162,6 +174,15 @@ export class MenuScene extends Phaser.Scene {
     this.nicknameInput = null;
 
     this.scene.start("GameScene", { nickname });
+  }
+
+  private onTestMode() {
+    // Clean up DOM input
+    if (this.nicknameInput) {
+      this.nicknameInput.destroy();
+      this.nicknameInput = null;
+    }
+    this.scene.start("GameScene", { nickname: "Dev", testMode: true });
   }
 
   private toggleHowToPlay() {

@@ -21,6 +21,7 @@ import {
   PLAYER_RADIUS,
   MAX_HEALTH,
   LOCKER_INTERACT_RANGE,
+  PICKUP_INTERACT_RANGE,
   CHARGED_SHOT_MIN_FRAMES,
   SHAKE_SHOOT_MAG,
   SHAKE_SHOOT_DURATION,
@@ -39,7 +40,7 @@ import {
   WeaponId,
 } from "shared";
 import { Button } from "shared";
-import type { InputPayload, WallRect } from "shared";
+import type { InputPayload, WallRect, WeaponConfig } from "shared";
 
 interface PendingInput {
   seq: number;
@@ -86,6 +87,7 @@ export class GameScene extends Phaser.Scene {
     LEFT: Phaser.Input.Keyboard.Key;
     RIGHT: Phaser.Input.Keyboard.Key;
     E: Phaser.Input.Keyboard.Key;
+    SPACE: Phaser.Input.Keyboard.Key;
   };
 
   // Local player
@@ -95,7 +97,6 @@ export class GameScene extends Phaser.Scene {
   private pendingInputs: PendingInput[] = [];
   private velocityX = 0;
   private velocityY = 0;
-  private offlineMode = false;
   private localHealth = MAX_HEALTH;
   private localKills = 0;
 
@@ -125,6 +126,7 @@ export class GameScene extends Phaser.Scene {
 
   // Button state tracking
   private attackHeld = false;
+  private prevAttackHeld = false;
 
   // Wall collision data (shared with server)
   private wallRects: WallRect[] = [];
@@ -142,6 +144,12 @@ export class GameScene extends Phaser.Scene {
 
   // Pickups
   private pickupSprites = new Map<number, Phaser.GameObjects.Container>();
+  private pickupWeaponIds = new Map<number, string>(); // pickup id → weapon id
+
+  // Pickup tooltip
+  private pickupTooltip!: Phaser.GameObjects.Container;
+  private pickupTooltipText!: Phaser.GameObjects.Text;
+  private hoveredPickupId: number | null = null;
 
   // Interaction prompt
   private interactPrompt!: Phaser.GameObjects.Text;
@@ -156,8 +164,12 @@ export class GameScene extends Phaser.Scene {
     super({ key: "GameScene" });
   }
 
-  init(data: { nickname?: string } = {}) {
+  // Test mode (offline, skips server connection)
+  private testMode = false;
+
+  init(data: { nickname?: string; testMode?: boolean } = {}) {
     this.nickname = data.nickname ?? "";
+    this.testMode = data.testMode ?? false;
   }
 
   create() {
@@ -168,7 +180,6 @@ export class GameScene extends Phaser.Scene {
     this.pendingInputs = [];
     this.velocityX = 0;
     this.velocityY = 0;
-    this.offlineMode = false;
     this.localHealth = MAX_HEALTH;
     this.localKills = 0;
     this.localMeleeWeaponId = WeaponId.Fists as string;
@@ -184,6 +195,7 @@ export class GameScene extends Phaser.Scene {
     this.spectateTargetId = null;
     this.spectateLabel = null;
     this.attackHeld = false;
+    this.prevAttackHeld = false;
     this.serverProjectileCount = 0;
     this.playerNames.clear();
     this.remotePlayers.clear();
@@ -192,6 +204,8 @@ export class GameScene extends Phaser.Scene {
     this.serverProjectileSprites.clear();
     this.lockerSprites.clear();
     this.pickupSprites.clear();
+    this.pickupWeaponIds.clear();
+    this.hoveredPickupId = null;
     this.dummies = [];
 
     // Create tilemap
@@ -214,13 +228,8 @@ export class GameScene extends Phaser.Scene {
       LEFT: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
       RIGHT: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
       E: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E),
+      SPACE: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
     };
-
-    // Spawn test dummies
-    for (const pos of DUMMY_SPAWN_POSITIONS) {
-      const dummy = new TestDummy(this, pos.x, pos.y);
-      this.dummies.push(dummy);
-    }
 
     // Input buffer & combo system
     this.inputBuffer = new InputBuffer();
@@ -261,6 +270,20 @@ export class GameScene extends Phaser.Scene {
     this.interactPrompt.setDepth(50);
     this.interactPrompt.setVisible(false);
 
+    // Pickup tooltip (reusable, follows hovered pickup)
+    this.pickupTooltipText = this.add.text(0, 0, "", {
+      fontSize: "11px",
+      fontFamily: "monospace",
+      color: "#ffffff",
+      backgroundColor: "#000000cc",
+      padding: { x: 6, y: 4 },
+      lineSpacing: 2,
+    });
+    this.pickupTooltipText.setOrigin(0.5, 1);
+    this.pickupTooltip = this.add.container(0, 0, [this.pickupTooltipText]);
+    this.pickupTooltip.setDepth(55);
+    this.pickupTooltip.setVisible(false);
+
     // Spectator label (shown above followed player)
     this.spectateLabel = this.add.text(0, 0, "", {
       fontSize: "12px",
@@ -290,6 +313,26 @@ export class GameScene extends Phaser.Scene {
       this.network.disconnect();
       this.scene.start("MenuScene");
     });
+
+    // ESC key returns to menu (works in both test mode and multiplayer)
+    this.input.keyboard!.on("keydown-ESC", () => {
+      this.network.disconnect();
+      this.scene.start("MenuScene");
+    });
+
+    // Test mode label
+    if (this.testMode) {
+      const testLabel = this.add.text(this.cameras.main.width / 2, 12, "TEST MODE  [ESC to exit]", {
+        fontSize: "13px",
+        fontFamily: "monospace",
+        color: "#ffcc00",
+        backgroundColor: "#00000088",
+        padding: { x: 8, y: 3 },
+      });
+      testLabel.setOrigin(0.5, 0);
+      testLabel.setScrollFactor(0);
+      testLabel.setDepth(200);
+    }
 
     // Clean up network on scene shutdown (scene.start to another scene)
     this.events.on("shutdown", () => {
@@ -386,12 +429,24 @@ export class GameScene extends Phaser.Scene {
   }
 
   private async connectToServer() {
+    const roomType = this.testMode ? "sandbox" : "game";
+    const options: Record<string, unknown> = { nickname: this.nickname };
+    if (this.testMode) options.sandbox = true;
+
     try {
-      const room = await this.network.connect({ nickname: this.nickname });
+      const room = await this.network.connect(options, roomType);
       this.localSessionId = room.sessionId;
 
       // Enable multiplayer mode on combat manager (disable local damage)
       this.combatManager.setMultiplayerMode(true);
+
+      // In sandbox, spawn dummies for local target practice
+      if (this.testMode) {
+        for (const pos of DUMMY_SPAWN_POSITIONS) {
+          const dummy = new TestDummy(this, pos.x, pos.y, this.wallRects);
+          this.dummies.push(dummy);
+        }
+      }
 
       // Track phase changes from state
       const trackState = () => {
@@ -545,7 +600,7 @@ export class GameScene extends Phaser.Scene {
         });
       });
 
-      // --- Pickups ---
+      // --- Pickups (click-to-pickup with hover tooltip) ---
       room.state.pickups.onAdd((pickup: any, _key: number) => {
         const weapon = getWeaponConfig(pickup.weaponId);
         const color = weapon?.color ?? 0xffffff;
@@ -566,7 +621,36 @@ export class GameScene extends Phaser.Scene {
 
         const container = this.add.container(pickup.x, pickup.y, [sprite, label]);
         container.setDepth(5);
+
+        // Make container interactive for click + hover
+        container.setSize(28, 28);
+        container.setInteractive({ useHandCursor: true });
+
+        const pickupId = pickup.id;
+
+        container.on("pointerup", () => {
+          if (!this.localPlayer) return;
+          const dx = this.localPlayer.x - container.x;
+          const dy = this.localPlayer.y - container.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist <= PICKUP_INTERACT_RANGE) {
+            room.send("pickup_click", { pickupId });
+          }
+        });
+
+        container.on("pointerover", () => {
+          this.hoveredPickupId = pickupId;
+        });
+
+        container.on("pointerout", () => {
+          if (this.hoveredPickupId === pickupId) {
+            this.hoveredPickupId = null;
+            this.pickupTooltip.setVisible(false);
+          }
+        });
+
         this.pickupSprites.set(pickup.id, container);
+        this.pickupWeaponIds.set(pickup.id, pickup.weaponId);
 
         pickup.onChange(() => {
           const c = this.pickupSprites.get(pickup.id);
@@ -581,6 +665,11 @@ export class GameScene extends Phaser.Scene {
         if (container) {
           container.destroy();
           this.pickupSprites.delete(pickup.id);
+        }
+        this.pickupWeaponIds.delete(pickup.id);
+        if (this.hoveredPickupId === pickup.id) {
+          this.hoveredPickupId = null;
+          this.pickupTooltip.setVisible(false);
         }
       });
 
@@ -725,10 +814,19 @@ export class GameScene extends Phaser.Scene {
         console.log(`Disconnected from room (code: ${code})`);
       });
     } catch (err) {
-      console.warn("Connection failed, starting in offline mode:", err);
-      this.offlineMode = true;
-      this.spawnLocalPlayer(ARENA_WIDTH / 2, ARENA_HEIGHT / 2);
-      this.combatManager.setOfflineDefaults();
+      console.error("Connection failed:", err);
+      // Show error and return to menu
+      const errorText = this.add.text(
+        this.cameras.main.width / 2, this.cameras.main.height / 2,
+        "Could not connect to server.\nClick to return to menu.",
+        { fontSize: "18px", fontFamily: "monospace", color: "#ff4444", align: "center" }
+      );
+      errorText.setOrigin(0.5, 0.5);
+      errorText.setScrollFactor(0);
+      errorText.setDepth(999);
+      this.input.once("pointerup", () => {
+        this.scene.start("MenuScene");
+      });
     }
   }
 
@@ -757,7 +855,11 @@ export class GameScene extends Phaser.Scene {
     if (leftDown) buttons |= Button.ATTACK;
     if (rightDown) buttons |= Button.MELEE;
     if (this.keys.E.isDown) buttons |= Button.INTERACT;
+    if (this.keys.SPACE.isDown) buttons |= Button.DASH;
     this.attackHeld = leftDown;
+
+    // Snapshot charge frames before updateCharging resets them on release
+    const chargeFramesBeforeUpdate = this.stateMachine.getChargeFrames();
 
     // Record input to buffer
     this.inputBuffer.recordFrame(dx, dy, buttons, aimAngle);
@@ -811,8 +913,6 @@ export class GameScene extends Phaser.Scene {
       if (canMove) {
         this.pendingInputs.push({ seq: this.inputSeq, dx, dy, dt, vx: this.velocityX, vy: this.velocityY });
       }
-    } else if (this.offlineMode) {
-      this.inputSeq++;
     }
 
     // Aim + combat (allowed when alive, even if movement frozen)
@@ -823,11 +923,15 @@ export class GameScene extends Phaser.Scene {
       // Combat aim
       this.combatManager.setAimAngle(aimAngle);
 
-      // Shoot on left click (only if not charging and state allows)
-      if (leftDown && this.stateMachine.canShoot() && !this.stateMachine.isCharging()) {
-        if (this.stateMachine.getChargeFrames() <= 1) {
+      // Fire prediction on release (matches server fire-on-release behavior)
+      // Short hold = normal shot, long hold = charged shot (combo system handles)
+      const attackReleased = this.prevAttackHeld && !leftDown;
+      if (attackReleased && this.stateMachine.canShoot()) {
+        const wasCharged = chargeFramesBeforeUpdate >= CHARGED_SHOT_MIN_FRAMES;
+        if (!wasCharged) {
           this.combatManager.tryShoot();
         }
+        // Charged shots are fired by the combo system callback (fireChargedShot)
       }
 
       // Update charge visual
@@ -837,6 +941,8 @@ export class GameScene extends Phaser.Scene {
         CHARGED_SHOT_MIN_FRAMES
       );
     }
+
+    this.prevAttackHeld = leftDown;
 
     // Movement (blocked when dead, eliminated, or phase-frozen)
     if (this.localPlayer && canMove) {
@@ -922,6 +1028,7 @@ export class GameScene extends Phaser.Scene {
 
     // Update interaction prompt
     this.updateInteractPrompt();
+    this.updatePickupTooltip();
 
     // Update combat
     this.combatManager.update(time, delta);
@@ -1103,6 +1210,62 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private updatePickupTooltip() {
+    if (this.hoveredPickupId === null || !this.localPlayer) {
+      this.pickupTooltip.setVisible(false);
+      return;
+    }
+
+    const container = this.pickupSprites.get(this.hoveredPickupId);
+    if (!container) {
+      this.hoveredPickupId = null;
+      this.pickupTooltip.setVisible(false);
+      return;
+    }
+
+    // Check distance — only show tooltip when within range
+    const dx = this.localPlayer.x - container.x;
+    const dy = this.localPlayer.y - container.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > PICKUP_INTERACT_RANGE) {
+      this.pickupTooltip.setVisible(false);
+      return;
+    }
+
+    const weaponId = this.pickupWeaponIds.get(this.hoveredPickupId);
+    if (!weaponId) {
+      this.pickupTooltip.setVisible(false);
+      return;
+    }
+
+    const weapon = getWeaponConfig(weaponId);
+    if (!weapon) {
+      this.pickupTooltip.setVisible(false);
+      return;
+    }
+
+    // Build tooltip text
+    const lines: string[] = [weapon.name];
+    lines.push(`Slot: ${weapon.slot}`);
+    if (weapon.slot === "melee") {
+      lines.push(`Damage: ${weapon.meleeDamage ?? 0}`);
+      lines.push(`Range: ${weapon.meleeRange ?? 0}`);
+      lines.push(`Arc: ${weapon.meleeArcDegrees ?? 0}°`);
+      lines.push(`Cooldown: ${weapon.meleeCooldownMs ?? 0}ms`);
+    } else {
+      lines.push(`Damage: ${weapon.damage ?? 0}`);
+      lines.push(`Fire rate: ${weapon.fireRateMs ?? 0}ms`);
+      lines.push(`Range: ${weapon.projectileRange ?? 0}`);
+      lines.push(`Speed: ${weapon.projectileSpeed ?? 0}`);
+    }
+    lines.push("[Click to pick up]");
+
+    this.pickupTooltipText.setText(lines.join("\n"));
+    this.pickupTooltip.setPosition(container.x, container.y - 20);
+    this.pickupTooltip.setVisible(true);
+  }
+
   private drawRemoteHealthBar(g: Phaser.GameObjects.Graphics, x: number, y: number, health: number) {
     g.clear();
 
@@ -1215,6 +1378,17 @@ export class GameScene extends Phaser.Scene {
     this.pendingInputs = this.pendingInputs.filter(
       (input) => input.seq > lastProcessed
     );
+
+    // During a dash, skip input replay — dash is a fixed trajectory,
+    // so trust the server position directly to avoid snap-back
+    if (this.stateMachine.isDashing() || serverPlayer.state === "dashing") {
+      this.localPlayer.x = serverPlayer.x;
+      this.localPlayer.y = serverPlayer.y;
+      this.velocityX = 0;
+      this.velocityY = 0;
+      this.pendingInputs = [];
+      return;
+    }
 
     // Reset to server-confirmed state
     let x = serverPlayer.x as number;

@@ -1,5 +1,6 @@
 import Phaser from "phaser";
-import { MAX_HEALTH, DUMMY_RESPAWN_TIME_MS } from "shared";
+import { MAX_HEALTH, DUMMY_RESPAWN_TIME_MS, PLAYER_RADIUS, resolveWallCollisions } from "shared";
+import type { WallRect } from "shared";
 
 const HEALTH_BAR_WIDTH = 30;
 const HEALTH_BAR_HEIGHT = 4;
@@ -13,19 +14,21 @@ export class TestDummy extends Phaser.Physics.Arcade.Sprite {
   private spawnX: number;
   private spawnY: number;
   private flashTimer = 0;
+  private wallRects: WallRect[];
 
   // Knockback
   private knockbackVx = 0;
   private knockbackVy = 0;
   private knockbackFramesLeft = 0;
 
-  constructor(scene: Phaser.Scene, x: number, y: number) {
+  constructor(scene: Phaser.Scene, x: number, y: number, wallRects: WallRect[] = []) {
     super(scene, x, y, "dummy");
     scene.add.existing(this);
     scene.physics.add.existing(this, true); // static body
 
     this.spawnX = x;
     this.spawnY = y;
+    this.wallRects = wallRects;
     this.maxHp = MAX_HEALTH;
     this.hp = this.maxHp;
 
@@ -91,9 +94,12 @@ export class TestDummy extends Phaser.Physics.Arcade.Sprite {
   private respawn() {
     this.hp = this.maxHp;
     this.alive = true;
-    this.setPosition(this.spawnX, this.spawnY);
+    // Resolve spawn against walls in case spawn point overlaps
+    const resolved = resolveWallCollisions(this.spawnX, this.spawnY, PLAYER_RADIUS, this.wallRects);
+    this.setPosition(resolved.x, resolved.y);
     this.setVisible(true);
     (this.body as Phaser.Physics.Arcade.StaticBody).enable = true;
+    (this.body as Phaser.Physics.Arcade.StaticBody).updateFromGameObject();
     this.healthBar.setVisible(true);
     this.clearTint();
     this.knockbackFramesLeft = 0;
@@ -133,8 +139,18 @@ export class TestDummy extends Phaser.Physics.Arcade.Sprite {
 
     // Apply knockback movement (manual position update for static bodies)
     if (this.knockbackFramesLeft > 0) {
-      this.x += this.knockbackVx;
-      this.y += this.knockbackVy;
+      const newX = this.x + this.knockbackVx;
+      const newY = this.y + this.knockbackVy;
+
+      // Resolve wall collisions
+      const resolved = resolveWallCollisions(newX, newY, PLAYER_RADIUS, this.wallRects);
+      this.x = resolved.x;
+      this.y = resolved.y;
+
+      // Stop knockback axis if wall was hit
+      if (Math.abs(resolved.x - newX) > 0.5) this.knockbackVx = 0;
+      if (Math.abs(resolved.y - newY) > 0.5) this.knockbackVy = 0;
+
       this.knockbackFramesLeft--;
 
       // Decay

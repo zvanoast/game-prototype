@@ -3,6 +3,7 @@ import { GameStateSchema, PlayerSchema, LockerSchema, PickupSchema } from "../st
 import {
   LOCKER_INTERACT_RANGE,
   PICKUP_RADIUS,
+  PICKUP_INTERACT_RANGE,
   PLAYER_RADIUS,
   TICK_RATE,
   ACTIVE_LOCKERS_MIN,
@@ -115,47 +116,48 @@ export class LootSystem {
     }
   }
 
-  /** Check player-pickup overlap each tick */
+  /** Update current tick (called each server tick) */
   tickPickups(tick: number) {
     this.currentTick = tick;
-    const toRemove: number[] = [];
+  }
 
-    this.state.players.forEach((player: PlayerSchema, sessionId: string) => {
-      if (player.state === "dead") return;
+  /** Player clicked a pickup — validate distance and equip */
+  processPickupClick(sessionId: string, pickupId: number) {
+    const player = this.state.players.get(sessionId);
+    if (!player || player.state === "dead") return;
 
-      for (let i = 0; i < this.state.pickups.length; i++) {
-        if (toRemove.includes(i)) continue;
-
-        const pickup = this.state.pickups.at(i);
-        if (!pickup) continue;
-
-        // Skip pickups still in immunity period
-        const spawnTick = this.pickupSpawnTick.get(pickup.id) ?? 0;
-        if (tick - spawnTick < PICKUP_IMMUNITY_TICKS) continue;
-
-        const dx = player.x - pickup.x;
-        const dy = player.y - pickup.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist <= PLAYER_RADIUS + PICKUP_RADIUS) {
-          const weaponConfig = getWeaponConfig(pickup.weaponId);
-          if (!weaponConfig) continue;
-
-          this.equipWeapon(sessionId, weaponConfig);
-          this.pickupSpawnTick.delete(pickup.id);
-          toRemove.push(i);
-        }
-      }
-    });
-
-    // Remove picked-up items (reverse order to avoid index shift)
-    if (toRemove.length > 0) {
-      toRemove.sort((a, b) => b - a);
-      for (const idx of toRemove) {
-        const arr = this.state.pickups as any;
-        arr.splice(idx, 1);
+    // Find the pickup by id
+    let pickupIdx = -1;
+    let pickup: PickupSchema | null = null;
+    for (let i = 0; i < this.state.pickups.length; i++) {
+      const p = this.state.pickups.at(i);
+      if (p && p.id === pickupId) {
+        pickupIdx = i;
+        pickup = p;
+        break;
       }
     }
+    if (!pickup || pickupIdx < 0) return;
+
+    // Check immunity
+    const spawnTick = this.pickupSpawnTick.get(pickup.id) ?? 0;
+    if (this.currentTick - spawnTick < PICKUP_IMMUNITY_TICKS) return;
+
+    // Check distance
+    const dx = player.x - pickup.x;
+    const dy = player.y - pickup.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > PICKUP_INTERACT_RANGE) return;
+
+    const weaponConfig = getWeaponConfig(pickup.weaponId);
+    if (!weaponConfig) return;
+
+    this.equipWeapon(sessionId, weaponConfig);
+    this.pickupSpawnTick.delete(pickup.id);
+
+    // Remove from array
+    const arr = this.state.pickups as any;
+    arr.splice(pickupIdx, 1);
   }
 
   /** Equip a weapon, dropping old weapon from that slot */

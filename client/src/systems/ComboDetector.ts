@@ -184,11 +184,26 @@ export class ComboDetector {
         const pressed = (frame.buttons & bit) !== 0;
         if (!pressed) return false;
 
-        // Check minFrames — we need the button held for at least N frames
-        // This is checked by looking at consecutive frames with the button held
-        // For simplicity, we just check if the button is currently held
-        // The actual frame count validation happens at the combo level
-        return true;
+        // Count consecutive held frames ending at this frame
+        const minFrames = cond.minFrames ?? 1;
+        if (minFrames <= 1) return true;
+
+        const all = this.inputBuffer.getAll(); // newest first
+        // Find this frame in history, then count consecutive held frames backwards
+        let foundFrame = false;
+        let heldCount = 0;
+        for (const f of all) {
+          if (!foundFrame) {
+            if (f.tick === frame.tick) foundFrame = true;
+            else continue;
+          }
+          if ((f.buttons & bit) !== 0) {
+            heldCount++;
+          } else {
+            break;
+          }
+        }
+        return heldCount >= minFrames;
       }
 
       case "button_release": {

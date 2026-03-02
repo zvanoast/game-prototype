@@ -9,6 +9,8 @@ import {
   PLAYER_RADIUS,
   MAX_HEALTH,
   MAX_PLAYERS_PER_ROOM,
+  DASH_DISTANCE,
+  DASH_DURATION_FRAMES,
   buildWallRects,
   resolveWallCollisions,
   applyMovement,
@@ -32,7 +34,14 @@ export class GameRoom extends Room<GameStateSchema> {
   // Track previous buttons per player for edge detection
   private prevButtons = new Map<string, number>();
 
-  onCreate() {
+  // Per-player dash state
+  private dashStates = new Map<string, { timeLeft: number; angle: number }>();
+
+  // Dash constants (derived from shared)
+  private static DASH_DURATION_S = DASH_DURATION_FRAMES / 60;
+  private static DASH_SPEED = DASH_DISTANCE / (DASH_DURATION_FRAMES / 60);
+
+  onCreate(options?: { sandbox?: boolean }) {
     this.setState(new GameStateSchema());
     this.maxClients = MAX_PLAYERS_PER_ROOM;
 
@@ -64,6 +73,12 @@ export class GameRoom extends Room<GameStateSchema> {
     this.combatSystem.setMatchSystem(this.matchSystem);
     this.matchSystem.setCombatSystem(this.combatSystem);
 
+    // Sandbox mode: skip match lifecycle
+    if (options?.sandbox) {
+      this.matchSystem.enableSandbox();
+      console.log("Sandbox mode enabled");
+    }
+
     // Listen for input messages
     this.onMessage("input", (client: Client, input: InputPayload) => {
       // Basic validation
@@ -75,6 +90,12 @@ export class GameRoom extends Room<GameStateSchema> {
         return;
       }
       this.inputQueue.push({ sessionId: client.sessionId, input });
+    });
+
+    // Listen for pickup click messages
+    this.onMessage("pickup_click", (client: Client, data: { pickupId: number }) => {
+      if (typeof data?.pickupId !== "number") return;
+      this.lootSystem.processPickupClick(client.sessionId, data.pickupId);
     });
 
     // Start fixed-rate simulation loop
@@ -113,6 +134,7 @@ export class GameRoom extends Room<GameStateSchema> {
     this.matchSystem.onPlayerLeave(client.sessionId);
     this.state.players.delete(client.sessionId);
     this.prevButtons.delete(client.sessionId);
+    this.dashStates.delete(client.sessionId);
     console.log(`Player left: ${client.sessionId}`);
   }
 
@@ -165,43 +187,76 @@ export class GameRoom extends Room<GameStateSchema> {
         ? input.dt
         : 1 / TICK_RATE;
 
-      // Movement (frozen during ended phase)
+      // Movement (frozen during waiting/countdown/ended phase)
       if (!frozen) {
         // Clamp input direction
         const dx = Math.max(-1, Math.min(1, input.dx));
         const dy = Math.max(-1, Math.min(1, input.dy));
 
-        // Shared acceleration-based movement
-        const moveResult = applyMovement(
-          player.x, player.y,
-          player.vx, player.vy,
-          dx, dy, dt
-        );
+        // Edge-detect DASH button
+        const prev = this.prevButtons.get(sessionId) ?? 0;
+        const dashPressed = !!(input.buttons & Button.DASH) && !(prev & Button.DASH);
 
-        // Shared wall collision resolution
-        const resolved = resolveWallCollisions(
-          moveResult.x, moveResult.y,
-          PLAYER_RADIUS, this.wallRects
-        );
-
-        // If wall collision pushed us back, zero velocity in that axis
-        let finalVx = moveResult.vx;
-        let finalVy = moveResult.vy;
-        if (Math.abs(resolved.x - moveResult.x) > 0.01) {
-          finalVx = 0;
-        }
-        if (Math.abs(resolved.y - moveResult.y) > 0.01) {
-          finalVy = 0;
+        if (dashPressed && !this.dashStates.has(sessionId)) {
+          // Start dash — direction from movement input or aim angle
+          const dashAngle = (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1)
+            ? Math.atan2(dy, dx)
+            : input.aimAngle;
+          this.dashStates.set(sessionId, {
+            timeLeft: GameRoom.DASH_DURATION_S,
+            angle: dashAngle,
+          });
         }
 
-        // Update player state
-        player.x = resolved.x;
-        player.y = resolved.y;
-        player.vx = finalVx;
-        player.vy = finalVy;
+        const dash = this.dashStates.get(sessionId);
+        if (dash) {
+          // Dash movement — fixed velocity in dash direction
+          const newX = player.x + Math.cos(dash.angle) * GameRoom.DASH_SPEED * dt;
+          const newY = player.y + Math.sin(dash.angle) * GameRoom.DASH_SPEED * dt;
+          const resolved = resolveWallCollisions(newX, newY, PLAYER_RADIUS, this.wallRects);
+          player.x = resolved.x;
+          player.y = resolved.y;
+          player.vx = 0;
+          player.vy = 0;
+          player.state = "dashing";
 
-        const mag = Math.sqrt(dx * dx + dy * dy);
-        player.state = mag > 0.1 ? "moving" : "idle";
+          dash.timeLeft -= dt;
+          if (dash.timeLeft <= 0) {
+            this.dashStates.delete(sessionId);
+            player.state = "idle";
+          }
+        } else {
+          // Normal acceleration-based movement
+          const moveResult = applyMovement(
+            player.x, player.y,
+            player.vx, player.vy,
+            dx, dy, dt
+          );
+
+          // Shared wall collision resolution
+          const resolved = resolveWallCollisions(
+            moveResult.x, moveResult.y,
+            PLAYER_RADIUS, this.wallRects
+          );
+
+          // If wall collision pushed us back, zero velocity in that axis
+          let finalVx = moveResult.vx;
+          let finalVy = moveResult.vy;
+          if (Math.abs(resolved.x - moveResult.x) > 0.01) {
+            finalVx = 0;
+          }
+          if (Math.abs(resolved.y - moveResult.y) > 0.01) {
+            finalVy = 0;
+          }
+
+          player.x = resolved.x;
+          player.y = resolved.y;
+          player.vx = finalVx;
+          player.vy = finalVy;
+
+          const mag = Math.sqrt(dx * dx + dy * dy);
+          player.state = mag > 0.1 ? "moving" : "idle";
+        }
       }
 
       player.angle = input.aimAngle;

@@ -47,9 +47,9 @@ export const DASH_STRIKE_RANGE_MULT = 2;         // melee range multiplier
 export const DASH_STRIKE_DAMAGE_MULT = 2;        // melee damage multiplier
 
 // --- Input / Combo Timing ---
-export const INPUT_BUFFER_SIZE = 30;             // frames stored (for combo detection)
+export const INPUT_BUFFER_SIZE = 60;             // frames stored (for combo detection)
 export const COMBO_WINDOW_FRAMES = 15;           // max frames between combo steps (double-tap window)
-export const CHARGED_SHOT_MIN_FRAMES = 20;       // hold attack this long to charge
+export const CHARGED_SHOT_MIN_FRAMES = 40;       // hold attack this long to charge
 export const DASH_STRIKE_WINDOW_FRAMES = 10;     // attack within this many frames after dash
 
 // --- Screen Shake ---
@@ -81,6 +81,7 @@ export const MAX_SERVER_PROJECTILES = 100;
 // --- Loot / Lockers ---
 export const LOCKER_INTERACT_RANGE = 48;  // pixels from player center
 export const PICKUP_RADIUS = 12;          // circle-vs-circle pickup range
+export const PICKUP_INTERACT_RANGE = 48;  // max distance to click-pickup a weapon
 export const ACTIVE_LOCKERS_MIN = 15;     // minimum lockers active per match
 export const ACTIVE_LOCKERS_MAX = 20;     // maximum lockers active per match
 

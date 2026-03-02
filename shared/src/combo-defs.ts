@@ -1,6 +1,5 @@
 import {
   CHARGED_SHOT_MIN_FRAMES,
-  COMBO_WINDOW_FRAMES,
   DASH_STRIKE_WINDOW_FRAMES,
 } from "./constants.js";
 
@@ -37,19 +36,15 @@ export interface ComboDefinition {
 // --- Starter combos ---
 
 /**
- * Dash: double-tap any movement direction within the combo window.
- * Represented here as double-tap right; the runtime mirrors for all directions.
+ * Dash: press spacebar (Button.DASH = 2).
+ * Direction is determined by current movement input or aim angle at runtime.
  */
 export const COMBO_DASH: ComboDefinition = {
   name: "dash",
   steps: [
     {
-      condition: { type: "direction_tap", param: 1 }, // first tap
-      windowFrames: 0, // starts the sequence
-    },
-    {
-      condition: { type: "direction_tap", param: 1 }, // second tap
-      windowFrames: COMBO_WINDOW_FRAMES,
+      condition: { type: "button_press", param: 2 }, // Button.DASH
+      windowFrames: 0,
     },
   ],
   cooldownTicks: 10,
@@ -78,21 +73,18 @@ export const COMBO_CHARGED_SHOT: ComboDefinition = {
 };
 
 /**
- * Dash-Strike: execute a dash, then press attack within 10 frames.
+ * Dash-Strike: press spacebar to dash, then right-click melee within 10 frames.
+ * Acts as a strong melee with damage multiplier.
  */
 export const COMBO_DASH_STRIKE: ComboDefinition = {
   name: "dash_strike",
   steps: [
     {
-      condition: { type: "direction_tap", param: 1 }, // first tap of dash
+      condition: { type: "button_press", param: 2 }, // Button.DASH (spacebar)
       windowFrames: 0,
     },
     {
-      condition: { type: "direction_tap", param: 1 }, // second tap (completes dash)
-      windowFrames: COMBO_WINDOW_FRAMES,
-    },
-    {
-      condition: { type: "button_press", param: 1 }, // attack right after
+      condition: { type: "button_press", param: 16 }, // Button.MELEE (right-click)
       windowFrames: DASH_STRIKE_WINDOW_FRAMES,
     },
   ],

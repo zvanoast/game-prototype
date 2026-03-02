@@ -181,6 +181,16 @@ export class MatchHud {
   ) {
     // Phase banner
     switch (phase) {
+      case "sandbox":
+        this.phaseBanner.setVisible(false);
+        this.aliveText.setVisible(false);
+        this.countdownText.setVisible(false);
+        this.eliminatedText.setVisible(false);
+        this.resultText.setVisible(false);
+        this.scoreboardContainer.setVisible(false);
+        this.leaveButton.setVisible(false);
+        break;
+
       case "waiting":
         this.phaseBanner.setText("Waiting for players...");
         this.phaseBanner.setVisible(true);

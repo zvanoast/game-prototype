@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import type { WeaponConfig } from "shared";
 import { getWeaponConfig, WEAPON_FISTS } from "shared";
-import { WeaponId } from "shared";
+
 import type { TestDummy } from "../entities/TestDummy";
 import {
   CHARGED_SHOT_SPEED,
@@ -74,13 +74,6 @@ export class CombatManager {
     }
   }
 
-  /** Set offline defaults (fists + no ranged) */
-  setOfflineDefaults() {
-    this.meleeConfig = WEAPON_FISTS;
-    // Give darts in offline mode so ranged works
-    this.rangedConfig = getWeaponConfig(WeaponId.Darts) ?? null;
-  }
-
   getMeleeConfig(): WeaponConfig {
     return this.meleeConfig;
   }
@@ -127,8 +120,8 @@ export class CombatManager {
       this.destroyProjectile(proj);
     });
 
-    // Collisions: projectiles vs dummies (only in offline/singleplayer mode)
-    if (!this.multiplayerMode) {
+    // Collisions: projectiles vs dummies (dummies only exist in sandbox/test mode)
+    if (this.dummies.length > 0) {
       for (const dummy of this.dummies) {
         this.scene.physics.add.overlap(this.projectiles, dummy, (obj1, obj2) => {
           const proj = (obj1 !== dummy ? obj1 : obj2) as Phaser.Physics.Arcade.Sprite;
@@ -286,8 +279,8 @@ export class CombatManager {
 
     this.scene.events.emit("sfx:melee_swing");
 
-    // In multiplayer mode, only show the arc visual — server handles damage
-    if (!this.multiplayerMode) {
+    // Hit dummies locally (dummies only exist in sandbox/test mode)
+    if (this.dummies.length > 0) {
       const arcHalf = Phaser.Math.DegToRad((this.meleeConfig.meleeArcDegrees ?? 90) / 2);
       const damage = (this.meleeConfig.meleeDamage ?? 10) * damageMult;
       const knockback = KNOCKBACK_MELEE * knockbackMult;
