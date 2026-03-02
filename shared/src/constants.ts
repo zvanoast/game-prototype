@@ -90,6 +90,11 @@ export const MIN_PLAYERS_TO_START = 2;
 export const COUNTDOWN_DURATION_MS = 5000;
 export const POST_MATCH_DELAY_MS = 10000;
 
+// --- Consumables ---
+export const MAX_CONSUMABLE_SLOTS = 2;
+export const CONSUMABLE_USE_COOLDOWN_MS = 500;
+export const CONSUMABLE_SPAWN_CHANCE = 0.3;  // 30% chance locker has consumable instead of weapon
+
 // --- Network ---
 export const SERVER_PORT = 3001;
 export const MAX_PLAYERS_PER_ROOM = 20;

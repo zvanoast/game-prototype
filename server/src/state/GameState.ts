@@ -25,6 +25,11 @@ export class PlayerSchema extends Schema {
   @type("string") rangedWeaponId: string = "";
   @type("boolean") eliminated: boolean = false;
   @type("string") displayName: string = "";
+  @type("string") consumableSlot1: string = "";
+  @type("string") consumableSlot2: string = "";
+  @type("int16") shieldHp: number = 0;
+  @type("float32") speedMultiplier: number = 1.0;
+  @type("float32") damageMultiplier: number = 1.0;
 }
 
 export class LockerSchema extends Schema {
@@ -33,6 +38,7 @@ export class LockerSchema extends Schema {
   @type("float32") y: number = 0;
   @type("boolean") opened: boolean = false;
   @type("string") containedWeaponId: string = "";
+  @type("string") containedConsumableId: string = "";
 }
 
 export class PickupSchema extends Schema {
@@ -40,6 +46,7 @@ export class PickupSchema extends Schema {
   @type("float32") x: number = 0;
   @type("float32") y: number = 0;
   @type("string") weaponId: string = "";
+  @type("string") consumableId: string = "";
 }
 
 export class GameStateSchema extends Schema {

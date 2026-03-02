@@ -80,6 +80,27 @@ export class ParticleManager {
     this.scene.time.delayedCall(600, () => emitter.destroy());
   }
 
+  /** Projectile trail: continuous emitter following a sprite. Returns cleanup function. */
+  projectileTrail(sprite: Phaser.GameObjects.Sprite, color: number): () => void {
+    const emitter = this.scene.add.particles(0, 0, "particle", {
+      speed: { min: 5, max: 20 },
+      scale: { start: 0.4, end: 0 },
+      alpha: { start: 0.6, end: 0 },
+      lifespan: 200,
+      frequency: 30,
+      tint: color,
+      follow: sprite,
+      emitting: true,
+    });
+    emitter.setDepth(8);
+
+    return () => {
+      emitter.stop();
+      // Let remaining particles fade out, then destroy
+      this.scene.time.delayedCall(300, () => emitter.destroy());
+    };
+  }
+
   /** Charged shot impact: larger, brighter burst */
   chargedImpact(x: number, y: number) {
     const emitter = this.scene.add.particles(x, y, "particle", {

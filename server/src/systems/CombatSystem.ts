@@ -1,6 +1,7 @@
 import { Room } from "colyseus";
 import { GameStateSchema, PlayerSchema, ProjectileSchema } from "../state/GameState";
 import { LootSystem } from "./LootSystem";
+import { BuffSystem } from "./BuffSystem";
 import type { MatchSystem } from "./MatchSystem";
 import type { InputPayload, WallRect } from "shared";
 import {
@@ -47,6 +48,7 @@ export class CombatSystem {
   private state: GameStateSchema;
   private wallRects: WallRect[];
   private lootSystem: LootSystem;
+  private buffSystem: BuffSystem | null = null;
   private matchSystem: MatchSystem | null = null;
   private playerCombat = new Map<string, PlayerCombatState>();
   private projectiles: ServerProjectile[] = [];
@@ -65,6 +67,10 @@ export class CombatSystem {
     this.wallRects = wallRects;
     this.findSafeSpawn = findSafeSpawn;
     this.lootSystem = lootSystem;
+  }
+
+  setBuffSystem(buffSystem: BuffSystem) {
+    this.buffSystem = buffSystem;
   }
 
   setMatchSystem(matchSystem: MatchSystem) {
@@ -162,13 +168,14 @@ export class CombatSystem {
   ) {
     if (this.projectiles.length >= MAX_SERVER_PROJECTILES) return;
 
+    const damageMult = this.buffSystem?.getDamageMultiplier(sessionId) ?? 1.0;
     const baseDamage = rangedConfig.damage ?? 15;
     const baseSpeed = rangedConfig.projectileSpeed ?? 600;
     const baseRadius = rangedConfig.projectileRadius ?? 2;
     const baseRange = rangedConfig.projectileRange ?? 800;
 
     const speed = charged ? CHARGED_SHOT_SPEED : baseSpeed;
-    const damage = charged ? baseDamage * CHARGED_SHOT_DAMAGE_MULT : baseDamage;
+    const damage = Math.round((charged ? baseDamage * CHARGED_SHOT_DAMAGE_MULT : baseDamage) * damageMult);
     const radius = charged ? CHARGED_SHOT_SIZE / 2 : baseRadius;
     const maxRange = charged ? baseRange * 1.5 : baseRange;
 
@@ -207,10 +214,11 @@ export class CombatSystem {
     rangeMult = 1,
     damageMult = 1
   ) {
+    const buffDamageMult = this.buffSystem?.getDamageMultiplier(sessionId) ?? 1.0;
     const arcDeg = meleeConfig.meleeArcDegrees ?? 90;
     const arcHalf = (arcDeg / 2) * (Math.PI / 180);
     const range = (meleeConfig.meleeRange ?? 36) * rangeMult;
-    const damage = Math.round((meleeConfig.meleeDamage ?? 10) * damageMult);
+    const damage = Math.round((meleeConfig.meleeDamage ?? 10) * damageMult * buffDamageMult);
 
     let hitAny = false;
 
@@ -252,6 +260,10 @@ export class CombatSystem {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i];
 
+      // Store previous position for swept collision
+      const prevX = proj.x;
+      const prevY = proj.y;
+
       // Advance position
       proj.x += Math.cos(proj.angle) * proj.speed * dt;
       proj.y += Math.sin(proj.angle) * proj.speed * dt;
@@ -284,18 +296,16 @@ export class CombatSystem {
         continue;
       }
 
-      // Check player collision (circle-vs-circle)
+      // Check player collision — swept (line segment vs circle) to prevent tunneling
       let hitPlayer = false;
       this.state.players.forEach((target: PlayerSchema, targetId: string) => {
         if (hitPlayer) return;
         if (targetId === proj.ownerId) return;
         if (target.state === "dead") return;
 
-        const dx = target.x - proj.x;
-        const dy = target.y - proj.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+        const hitRadius = PLAYER_RADIUS + proj.radius;
 
-        if (dist < PLAYER_RADIUS + proj.radius) {
+        if (this.lineCircleIntersect(prevX, prevY, proj.x, proj.y, target.x, target.y, hitRadius)) {
           this.applyDamage(targetId, target, proj.damage, proj.ownerId, proj.charged ? "charged" : "projectile");
           hitPlayer = true;
         }
@@ -328,12 +338,22 @@ export class CombatSystem {
     attackerId: string,
     type: "projectile" | "charged" | "melee"
   ) {
-    target.health -= damage;
+    // Route through shield first
+    let actualDamage = damage;
+    let shieldAbsorbed = 0;
+    if (this.buffSystem) {
+      const result = this.buffSystem.applyShieldDamage(targetId, damage, target);
+      actualDamage = result.remaining;
+      shieldAbsorbed = result.absorbed;
+    }
+
+    target.health -= actualDamage;
 
     this.room.broadcast("hit", {
       targetId,
       attackerId,
-      damage,
+      damage: actualDamage,
+      shieldAbsorbed,
       type,
       x: target.x,
       y: target.y,
@@ -456,6 +476,42 @@ export class CombatSystem {
         schema.y = proj.y;
       }
     }
+  }
+
+  /** Check if line segment (x1,y1)→(x2,y2) intersects circle at (cx,cy) with radius r */
+  private lineCircleIntersect(
+    x1: number, y1: number, x2: number, y2: number,
+    cx: number, cy: number, r: number
+  ): boolean {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const fx = x1 - cx;
+    const fy = y1 - cy;
+
+    const a = dx * dx + dy * dy;
+    const b = 2 * (fx * dx + fy * dy);
+    const c = fx * fx + fy * fy - r * r;
+
+    // If segment has zero length, do point-in-circle check
+    if (a < 0.0001) {
+      return c <= 0;
+    }
+
+    let discriminant = b * b - 4 * a * c;
+    if (discriminant < 0) return false;
+
+    discriminant = Math.sqrt(discriminant);
+    const t1 = (-b - discriminant) / (2 * a);
+    const t2 = (-b + discriminant) / (2 * a);
+
+    // Check if either intersection point is on the segment [0, 1]
+    if (t1 >= 0 && t1 <= 1) return true;
+    if (t2 >= 0 && t2 <= 1) return true;
+
+    // Check if circle contains start or end point (segment fully inside circle)
+    if (t1 < 0 && t2 > 1) return true;
+
+    return false;
   }
 
   private syncProjectilesToSchema() {

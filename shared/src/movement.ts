@@ -22,6 +22,7 @@ export interface MovementResult {
  * @param dx  Input direction x (-1 to 1)
  * @param dy  Input direction y (-1 to 1)
  * @param dt  Delta time in seconds
+ * @param speedMultiplier  Optional speed multiplier (default 1.0)
  * @returns New position and velocity
  */
 export function applyMovement(
@@ -31,7 +32,8 @@ export function applyMovement(
   vy: number,
   dx: number,
   dy: number,
-  dt: number
+  dt: number,
+  speedMultiplier = 1.0
 ): MovementResult {
   // Normalize input direction
   let ix = dx;
@@ -66,10 +68,11 @@ export function applyMovement(
     }
   }
 
-  // Clamp to max speed
+  // Clamp to max speed (with multiplier)
+  const maxSpeed = PLAYER_SPEED * speedMultiplier;
   const currentSpeed = Math.sqrt(newVx * newVx + newVy * newVy);
-  if (currentSpeed > PLAYER_SPEED) {
-    const scale = PLAYER_SPEED / currentSpeed;
+  if (currentSpeed > maxSpeed) {
+    const scale = maxSpeed / currentSpeed;
     newVx *= scale;
     newVy *= scale;
   }

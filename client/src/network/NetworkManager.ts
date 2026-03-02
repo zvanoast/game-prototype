@@ -90,6 +90,10 @@ export class NetworkManager {
     }
   }
 
+  isConnected(): boolean {
+    return this.room !== null;
+  }
+
   getRoom(): Room | null {
     return this.room;
   }

@@ -13,6 +13,7 @@ export class BootScene extends Phaser.Scene {
     this.generateProjectileTextures();
     this.generateLockerTextures();
     this.generatePickupTextures();
+    this.generateConsumablePickupTextures();
     this.generateDummyTexture();
     this.generateMiscTextures();
     this.registerAnimations();
@@ -258,6 +259,22 @@ export class BootScene extends Phaser.Scene {
     chargedGfx.fillCircle(4, 4, 2.5);
     chargedGfx.generateTexture("proj_charged", 8, 8);
     chargedGfx.destroy();
+
+    // Vase: large purple circle (12x12)
+    const vaseGfx = this.add.graphics();
+    vaseGfx.fillStyle(0x8844aa, 1);
+    vaseGfx.fillCircle(6, 6, 6);
+    vaseGfx.lineStyle(1, 0xaa66cc, 0.5);
+    vaseGfx.strokeCircle(6, 6, 4);
+    vaseGfx.generateTexture("proj_vase", 12, 12);
+    vaseGfx.destroy();
+
+    // Rubber band gun: tiny yellow line (4x2)
+    const rbGfx = this.add.graphics();
+    rbGfx.fillStyle(0xffdd44, 1);
+    rbGfx.fillRect(0, 0, 4, 2);
+    rbGfx.generateTexture("proj_rubber_band_gun", 4, 2);
+    rbGfx.destroy();
   }
 
   // ─── Locker textures ────────────────────────────────────────────────
@@ -370,6 +387,77 @@ export class BootScene extends Phaser.Scene {
     stapleGfx.fillRect(12, 5, 2, 3); // muzzle
     stapleGfx.generateTexture("pickup_staple_gun", 16, 16);
     stapleGfx.destroy();
+
+    // Baseball bat silhouette
+    const batGfx = this.add.graphics();
+    batGfx.fillStyle(0xffffff, 1);
+    batGfx.fillRect(7, 2, 3, 12); // handle
+    batGfx.fillRect(5, 0, 7, 4);  // barrel
+    batGfx.generateTexture("pickup_baseball_bat", 16, 16);
+    batGfx.destroy();
+
+    // Golf club silhouette
+    const golfGfx = this.add.graphics();
+    golfGfx.fillStyle(0xffffff, 1);
+    golfGfx.fillRect(7, 1, 2, 12); // shaft
+    golfGfx.fillRect(4, 12, 8, 3); // head
+    golfGfx.generateTexture("pickup_golf_club", 16, 16);
+    golfGfx.destroy();
+
+    // Vase silhouette
+    const vaseGfx = this.add.graphics();
+    vaseGfx.fillStyle(0xffffff, 1);
+    vaseGfx.fillCircle(8, 7, 5);   // body
+    vaseGfx.fillRect(6, 1, 4, 3);  // neck
+    vaseGfx.fillRect(5, 12, 6, 2); // base
+    vaseGfx.generateTexture("pickup_vase", 16, 16);
+    vaseGfx.destroy();
+
+    // Rubber band gun silhouette
+    const rbgGfx = this.add.graphics();
+    rbgGfx.fillStyle(0xffffff, 1);
+    rbgGfx.fillRect(2, 5, 12, 3);  // barrel
+    rbgGfx.fillRect(4, 7, 4, 6);   // grip
+    rbgGfx.fillTriangle(13, 4, 14, 8, 11, 8); // front sight
+    rbgGfx.generateTexture("pickup_rubber_band_gun", 16, 16);
+    rbgGfx.destroy();
+  }
+
+  // ─── Consumable pickup textures ─────────────────────────────────────
+
+  private generateConsumablePickupTextures() {
+    // Health pack: green cross
+    const healthGfx = this.add.graphics();
+    healthGfx.fillStyle(0x44ff44, 1);
+    healthGfx.fillRect(5, 2, 6, 12);  // vertical bar
+    healthGfx.fillRect(2, 5, 12, 6);  // horizontal bar
+    healthGfx.generateTexture("pickup_health_pack", 16, 16);
+    healthGfx.destroy();
+
+    // Speed boost: lightning bolt (cyan)
+    const speedGfx = this.add.graphics();
+    speedGfx.fillStyle(0x44ddff, 1);
+    speedGfx.fillTriangle(8, 1, 4, 8, 9, 7);   // top
+    speedGfx.fillTriangle(7, 9, 12, 8, 8, 15);  // bottom
+    speedGfx.generateTexture("pickup_speed_boost", 16, 16);
+    speedGfx.destroy();
+
+    // Shield: shield shape (purple)
+    const shieldGfx = this.add.graphics();
+    shieldGfx.fillStyle(0xdd88ff, 1);
+    shieldGfx.fillCircle(8, 6, 6);     // top dome
+    shieldGfx.fillTriangle(2, 6, 14, 6, 8, 15); // bottom point
+    shieldGfx.generateTexture("pickup_shield", 16, 16);
+    shieldGfx.destroy();
+
+    // Damage boost: star burst (red)
+    const dmgGfx = this.add.graphics();
+    dmgGfx.fillStyle(0xff4444, 1);
+    // Star shape via overlapping triangles
+    dmgGfx.fillTriangle(8, 1, 5, 11, 14, 5);
+    dmgGfx.fillTriangle(8, 15, 2, 5, 11, 11);
+    dmgGfx.generateTexture("pickup_damage_boost", 16, 16);
+    dmgGfx.destroy();
   }
 
   // ─── Dummy sprite (target mannequin) ────────────────────────────────

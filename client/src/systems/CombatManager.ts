@@ -189,7 +189,7 @@ export class CombatManager {
       false
     );
 
-    this.scene.events.emit("sfx:shoot");
+    this.scene.events.emit("sfx:shoot_weapon", this.rangedConfig?.id ?? "");
     this.scene.events.emit("juice:shoot", this.aimAngle);
     return true;
   }
@@ -277,7 +277,7 @@ export class CombatManager {
 
     const range = (this.meleeConfig.meleeRange ?? 36) * rangeMult;
 
-    this.scene.events.emit("sfx:melee_swing");
+    this.scene.events.emit("sfx:melee_weapon", this.meleeConfig.id);
 
     // Hit dummies locally (dummies only exist in sandbox/test mode)
     if (this.dummies.length > 0) {
@@ -408,8 +408,9 @@ export class CombatManager {
     this.meleeArcGraphics.clear();
     this.meleeArcGraphics.setVisible(true);
 
-    this.meleeArcGraphics.fillStyle(0xffffff, 0.2);
-    this.meleeArcGraphics.lineStyle(2, 0xffffff, 0.5);
+    const arcColor = this.meleeConfig.color ?? 0xffffff;
+    this.meleeArcGraphics.fillStyle(arcColor, 0.2);
+    this.meleeArcGraphics.lineStyle(2, arcColor, 0.5);
 
     this.meleeArcGraphics.beginPath();
     this.meleeArcGraphics.moveTo(this.player.x, this.player.y);

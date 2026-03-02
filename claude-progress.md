@@ -275,3 +275,39 @@
 
 ### Shared Constants
 - `shared/src/constants.ts` — `POST_MATCH_DELAY_MS`: 5000 → 10000 (more time to view scoreboard)
+
+## Phase 9: Consumables & Weapon Polish — COMPLETE
+
+### 9A: Shared Types & Registries
+- `shared/src/types.ts` — `ConsumableId` enum (HealthPack, SpeedBoost, Shield, DamageBoost), `ConsumableConfig` interface, `Button.USE_CONSUMABLE = 1 << 5`, 4 new `WeaponId` entries (BaseballBat, GolfClub, Vase, RubberBandGun), optional `knockback`/`meleeKnockback` on `WeaponConfig`
+- `shared/src/consumables.ts` — CREATE: 4 consumable configs (First Aid Kit 50HP heal, Energy Drink 1.4x speed 8s, Bubble Wrap Armor +40 shield 10s, Adrenaline Shot 1.5x damage 6s), `CONSUMABLE_REGISTRY`, `LOOTABLE_CONSUMABLE_IDS`, `getConsumableConfig()`
+- `shared/src/weapons.ts` — 4 new weapons (Baseball Bat, Golf Club, Vase, Rubber Band Gun), balance tuning (Fists 10→8 dmg / 350→300ms CD, Hammer 40→35 dmg / 700→750ms CD, Frying Pan 30→28 dmg / 100→95° arc, Darts 12→10 dmg / 150→140ms rate, Staple Gun 8→7 dmg / 550→500 range)
+- `shared/src/constants.ts` — `MAX_CONSUMABLE_SLOTS`, `CONSUMABLE_USE_COOLDOWN_MS`, `CONSUMABLE_SPAWN_CHANCE`
+- `shared/src/movement.ts` — `applyMovement()` now accepts optional `speedMultiplier` param
+- `shared/src/index.ts` — exports `consumables.ts`
+
+### 9B: Server State & Buff System
+- `server/src/state/GameState.ts` — `PlayerSchema`: consumableSlot1, consumableSlot2, shieldHp, speedMultiplier, damageMultiplier; `LockerSchema.containedConsumableId`; `PickupSchema.consumableId`
+- `server/src/systems/BuffSystem.ts` — CREATE: tracks timed buffs per player (speed, damage, shield); `useConsumable()` applies instant heal or timed buff; `tick()` decrements timers, expires buffs; `applyShieldDamage()` absorbs damage via shield; `resetPlayer()`/`resetForNewMatch()`
+- `server/src/systems/LootSystem.ts` — extended `PlayerEquipment` with consumable slots; `initLockers()` 30% chance for consumable; `processPickupClick()` handles consumable pickups; `equipConsumable()` fills slot1→slot2→swap; `useConsumable()` removes from first non-empty slot; `dropPlayerItems()` drops consumables on death
+- `server/src/systems/CombatSystem.ts` — accepts BuffSystem ref; multiplies projectile/melee damage by `getDamageMultiplier()`; routes damage through `applyShieldDamage()` before applying to health
+- `server/src/rooms/GameRoom.ts` — BuffSystem wiring; Q key (`Button.USE_CONSUMABLE`) edge detection → `lootSystem.useConsumable()` → `buffSystem.useConsumable()`; `buffSystem.tick()` in main loop; speed multiplier passed to `applyMovement()`; broadcasts `consumable_used`/`buff_expired`
+- `server/src/systems/MatchSystem.ts` — BuffSystem ref; resets buffs and multipliers on match reset
+
+### 9C: Client Consumable UI
+- `client/src/scenes/BootScene.ts` — consumable pickup textures (health_pack green cross, speed_boost lightning, shield shape, damage_boost star), new weapon pickup textures (baseball_bat, golf_club, vase, rubber_band_gun), new projectile textures (proj_vase large circle, proj_rubber_band_gun tiny line)
+- `client/src/ui/WeaponHud.ts` — consumable slot display: `[Q] name1 | name2` below weapon slots
+- `client/src/scenes/GameScene.ts` — Q key → `Button.USE_CONSUMABLE`; consumable slot sync from PlayerSchema; pickup onAdd handles consumable pickups (texture, label); `consumable_used`/`buff_expired` message handlers (particles + sound); buff tinting on remote player sprites (red=damage, blue=speed, purple=shield); shield HP bar above health bar
+
+### 9D: Weapon Visual & Audio Polish
+- `client/src/audio/ProceduralAudio.ts` — per-weapon shoot sounds (darts tick, plates whoosh, staple_gun click, vase thunk, rubber_band_gun twang), per-weapon melee sounds (fists thud, hammer clang, lamp ring, frying_pan clang, baseball_bat crack, golf_club whoosh), consumable sounds (consumable_use chime, shield_hit pop, buff_expired descend)
+- `client/src/systems/SoundManager.ts` — registers all per-weapon + consumable buffers; `sfx:shoot_weapon` and `sfx:melee_weapon` events with weapon ID fallback to generic
+- `client/src/systems/CombatManager.ts` — emits `sfx:shoot_weapon` with weapon ID instead of generic `sfx:shoot`; emits `sfx:melee_weapon` with weapon ID instead of generic `sfx:melee_swing`; melee arc tinted with weapon's color
+- `client/src/systems/ParticleManager.ts` — `projectileTrail()` method: continuous particle emitter following a sprite with color-matched trail
+- `client/src/scenes/GameScene.ts` — attaches projectile trails on server projectile onAdd, cleans up on onRemove
+
+### Weapons (11 total, 4 new)
+- **Baseball Bat** (melee): 25 dmg, 52 range, 85° arc, 350ms CD — fast swing
+- **Golf Club** (melee): 30 dmg, 64 range, 50° arc, 600ms CD, high knockback — long reach, narrow
+- **Vase** (ranged): 35 dmg, 300 speed, 350 range, 5 radius, 800ms rate — heavy, short range, big projectile
+- **Rubber Band Gun** (ranged): 4 dmg, 900 speed, 700 range, 1 radius, 80ms rate — rapid-fire spam

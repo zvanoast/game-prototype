@@ -37,6 +37,7 @@ import {
   resolveWallCollisions,
   buildWallRects,
   getWeaponConfig,
+  getConsumableConfig,
   WeaponId,
 } from "shared";
 import { Button } from "shared";
@@ -57,6 +58,9 @@ interface RemotePlayerData {
   angle: number;
   health: number;
   state: string;
+  shieldHp: number;
+  speedMultiplier: number;
+  damageMultiplier: number;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -87,6 +91,7 @@ export class GameScene extends Phaser.Scene {
     LEFT: Phaser.Input.Keyboard.Key;
     RIGHT: Phaser.Input.Keyboard.Key;
     E: Phaser.Input.Keyboard.Key;
+    Q: Phaser.Input.Keyboard.Key;
     SPACE: Phaser.Input.Keyboard.Key;
   };
 
@@ -98,11 +103,14 @@ export class GameScene extends Phaser.Scene {
   private velocityX = 0;
   private velocityY = 0;
   private localHealth = MAX_HEALTH;
+  private localShieldHp = 0;
   private localKills = 0;
 
   // Equipment tracking
   private localMeleeWeaponId = WeaponId.Fists as string;
   private localRangedWeaponId = "";
+  private localConsumableSlot1 = "";
+  private localConsumableSlot2 = "";
 
   // Match state
   private matchPhase: string = "waiting";
@@ -138,6 +146,7 @@ export class GameScene extends Phaser.Scene {
 
   // Server projectile sprites (keyed by projectile id)
   private serverProjectileSprites = new Map<number, Phaser.GameObjects.Sprite>();
+  private serverProjectileTrailCleanups = new Map<number, () => void>();
 
   // Lockers
   private lockerSprites = new Map<number, Phaser.GameObjects.Sprite>();
@@ -184,6 +193,8 @@ export class GameScene extends Phaser.Scene {
     this.localKills = 0;
     this.localMeleeWeaponId = WeaponId.Fists as string;
     this.localRangedWeaponId = "";
+    this.localConsumableSlot1 = "";
+    this.localConsumableSlot2 = "";
     this.matchPhase = "waiting";
     this.localEliminated = false;
     this.matchWinner = null;
@@ -202,6 +213,7 @@ export class GameScene extends Phaser.Scene {
     this.remoteTargets.clear();
     this.remoteHealthBars.clear();
     this.serverProjectileSprites.clear();
+    this.serverProjectileTrailCleanups.clear();
     this.lockerSprites.clear();
     this.pickupSprites.clear();
     this.pickupWeaponIds.clear();
@@ -228,6 +240,7 @@ export class GameScene extends Phaser.Scene {
       LEFT: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
       RIGHT: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
       E: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E),
+      Q: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.Q),
       SPACE: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
     };
 
@@ -380,7 +393,20 @@ export class GameScene extends Phaser.Scene {
         this.combatManager.executeDashStrike();
       },
       onChargedShot: () => {
-        this.combatManager.fireChargedShot();
+        if (this.network.isConnected()) {
+          // Multiplayer: just emit sound/juice, server drives projectile sprite
+          const rangedCfg = this.combatManager.getRangedConfig();
+          if (rangedCfg) {
+            this.events.emit("sfx:charged_shot");
+            this.events.emit("juice:charged_shot", this.combatManager.getAimAngle());
+            const spawnDist = 20;
+            const px = this.localPlayer!.x + Math.cos(this.combatManager.getAimAngle()) * spawnDist;
+            const py = this.localPlayer!.y + Math.sin(this.combatManager.getAimAngle()) * spawnDist;
+            this.events.emit("particle:muzzle", px, py, this.combatManager.getAimAngle());
+          }
+        } else {
+          this.combatManager.fireChargedShot();
+        }
       },
     });
   }
@@ -481,10 +507,13 @@ export class GameScene extends Phaser.Scene {
         if (sessionId === room.sessionId) {
           this.spawnLocalPlayer(player.x, player.y);
           this.localHealth = player.health;
+          this.localShieldHp = player.shieldHp ?? 0;
           this.localKills = player.kills ?? 0;
           this.localEliminated = player.eliminated ?? false;
           this.localMeleeWeaponId = player.meleeWeaponId ?? WeaponId.Fists;
           this.localRangedWeaponId = player.rangedWeaponId ?? "";
+          this.localConsumableSlot1 = player.consumableSlot1 ?? "";
+          this.localConsumableSlot2 = player.consumableSlot2 ?? "";
           this.combatManager.setMeleeWeapon(this.localMeleeWeaponId);
           this.combatManager.setRangedWeapon(this.localRangedWeaponId);
 
@@ -506,6 +535,9 @@ export class GameScene extends Phaser.Scene {
             angle: player.angle ?? 0,
             health: player.health ?? MAX_HEALTH,
             state: player.state ?? "idle",
+            shieldHp: player.shieldHp ?? 0,
+            speedMultiplier: player.speedMultiplier ?? 1.0,
+            damageMultiplier: player.damageMultiplier ?? 1.0,
           });
 
           // Create health bar graphics for remote player
@@ -525,6 +557,7 @@ export class GameScene extends Phaser.Scene {
           if (sessionId === room.sessionId) {
             this.reconcile(player);
             this.localHealth = player.health;
+            this.localShieldHp = player.shieldHp ?? 0;
             this.localKills = player.kills ?? 0;
             this.localEliminated = player.eliminated ?? false;
 
@@ -539,6 +572,10 @@ export class GameScene extends Phaser.Scene {
               this.localRangedWeaponId = newRanged;
               this.combatManager.setRangedWeapon(newRanged);
             }
+
+            // Track consumable changes
+            this.localConsumableSlot1 = player.consumableSlot1 ?? "";
+            this.localConsumableSlot2 = player.consumableSlot2 ?? "";
 
             // Handle local player death state from server
             if (player.state === "dead" && this.localPlayer) {
@@ -557,6 +594,9 @@ export class GameScene extends Phaser.Scene {
               angle: player.angle ?? 0,
               health: player.health ?? MAX_HEALTH,
               state: player.state ?? "idle",
+              shieldHp: player.shieldHp ?? 0,
+              speedMultiplier: player.speedMultiplier ?? 1.0,
+              damageMultiplier: player.damageMultiplier ?? 1.0,
             });
           }
         });
@@ -602,15 +642,22 @@ export class GameScene extends Phaser.Scene {
 
       // --- Pickups (click-to-pickup with hover tooltip) ---
       room.state.pickups.onAdd((pickup: any, _key: number) => {
-        const weapon = getWeaponConfig(pickup.weaponId);
-        const color = weapon?.color ?? 0xffffff;
+        const isConsumable = !!pickup.consumableId;
+        const weapon = isConsumable ? null : getWeaponConfig(pickup.weaponId);
+        const consumable = isConsumable ? getConsumableConfig(pickup.consumableId) : null;
+        const color = isConsumable ? (consumable?.color ?? 0xffffff) : (weapon?.color ?? 0xffffff);
 
-        const pickupTexKey = this.getPickupTexture(pickup.weaponId);
+        const pickupTexKey = isConsumable
+          ? this.getConsumablePickupTexture(pickup.consumableId)
+          : this.getPickupTexture(pickup.weaponId);
         const sprite = this.add.sprite(0, 0, pickupTexKey);
         sprite.setTint(color);
         sprite.setOrigin(0.5, 0.5);
 
-        const label = this.add.text(0, 12, weapon?.name ?? pickup.weaponId, {
+        const displayName = isConsumable
+          ? (consumable?.name ?? pickup.consumableId)
+          : (weapon?.name ?? pickup.weaponId);
+        const label = this.add.text(0, 12, displayName, {
           fontSize: "10px",
           fontFamily: "monospace",
           color: "#ffffff",
@@ -675,9 +722,6 @@ export class GameScene extends Phaser.Scene {
 
       // Listen for server projectile state changes
       room.state.projectiles.onAdd((proj: any, _key: number) => {
-        // Skip projectiles owned by local player (already shown via client prediction)
-        if (proj.ownerId === room.sessionId) return;
-
         const texKey = proj.charged
           ? "proj_charged"
           : this.getProjectileTexture(proj.weaponId ?? "");
@@ -689,6 +733,12 @@ export class GameScene extends Phaser.Scene {
         }
         this.serverProjectileSprites.set(proj.id, sprite);
 
+        // Attach projectile trail
+        const weaponCfg = getWeaponConfig(proj.weaponId ?? "");
+        const trailColor = proj.charged ? 0xff8800 : (weaponCfg?.projectileColor ?? 0xffff00);
+        const trailCleanup = this.particles.projectileTrail(sprite, trailColor);
+        this.serverProjectileTrailCleanups.set(proj.id, trailCleanup);
+
         proj.onChange(() => {
           const s = this.serverProjectileSprites.get(proj.id);
           if (s) {
@@ -698,6 +748,13 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.state.projectiles.onRemove((proj: any, _key: number) => {
+        // Clean up trail
+        const trailCleanup = this.serverProjectileTrailCleanups.get(proj.id);
+        if (trailCleanup) {
+          trailCleanup();
+          this.serverProjectileTrailCleanups.delete(proj.id);
+        }
+
         const sprite = this.serverProjectileSprites.get(proj.id);
         if (sprite) {
           // Impact particles on removal
@@ -810,6 +867,43 @@ export class GameScene extends Phaser.Scene {
         }
       });
 
+      room.onMessage("consumable_pickup", (data: any) => {
+        if (data.sessionId === room.sessionId) {
+          if (this.localPlayer) {
+            this.particles.impact(this.localPlayer.x, this.localPlayer.y, 0x44ff44);
+          }
+          this.events.emit("sfx:pickup");
+        }
+      });
+
+      room.onMessage("consumable_used", (data: any) => {
+        const config = getConsumableConfig(data.consumableId);
+        const color = config?.color ?? 0xffffff;
+
+        // Find the player sprite and show particles
+        if (data.sessionId === room.sessionId) {
+          if (this.localPlayer) {
+            this.particles.impact(this.localPlayer.x, this.localPlayer.y, color);
+          }
+        } else {
+          const sprite = this.remotePlayers.get(data.sessionId);
+          if (sprite) {
+            this.particles.impact(sprite.x, sprite.y, color);
+          }
+        }
+        this.events.emit("sfx:consumable_use");
+      });
+
+      room.onMessage("buff_expired", (data: any) => {
+        // Particle puff when buff expires
+        if (data.sessionId === room.sessionId) {
+          if (this.localPlayer) {
+            this.particles.impact(this.localPlayer.x, this.localPlayer.y, 0x888888);
+          }
+        }
+        this.events.emit("sfx:buff_expired");
+      });
+
       room.onLeave((code: number) => {
         console.log(`Disconnected from room (code: ${code})`);
       });
@@ -855,6 +949,7 @@ export class GameScene extends Phaser.Scene {
     if (leftDown) buttons |= Button.ATTACK;
     if (rightDown) buttons |= Button.MELEE;
     if (this.keys.E.isDown) buttons |= Button.INTERACT;
+    if (this.keys.Q.isDown) buttons |= Button.USE_CONSUMABLE;
     if (this.keys.SPACE.isDown) buttons |= Button.DASH;
     this.attackHeld = leftDown;
 
@@ -924,12 +1019,27 @@ export class GameScene extends Phaser.Scene {
       this.combatManager.setAimAngle(aimAngle);
 
       // Fire prediction on release (matches server fire-on-release behavior)
-      // Short hold = normal shot, long hold = charged shot (combo system handles)
+      // In multiplayer, only emit muzzle flash/sound — actual projectile visuals
+      // come from server state so they properly disappear on hit.
       const attackReleased = this.prevAttackHeld && !leftDown;
       if (attackReleased && this.stateMachine.canShoot()) {
         const wasCharged = chargeFramesBeforeUpdate >= CHARGED_SHOT_MIN_FRAMES;
         if (!wasCharged) {
-          this.combatManager.tryShoot();
+          if (this.network.isConnected()) {
+            // Multiplayer: just emit muzzle flash/sound, server drives projectile sprite
+            const rangedCfg = this.combatManager.getRangedConfig();
+            if (rangedCfg) {
+              this.events.emit("sfx:shoot_weapon", rangedCfg.id);
+              this.events.emit("juice:shoot", aimAngle);
+              const spawnDist = 20;
+              const mx = this.localPlayer!.x + Math.cos(aimAngle) * spawnDist;
+              const my = this.localPlayer!.y + Math.sin(aimAngle) * spawnDist;
+              this.events.emit("particle:muzzle", mx, my, aimAngle);
+            }
+          } else {
+            // Offline: use local predicted projectiles
+            this.combatManager.tryShoot();
+          }
         }
         // Charged shots are fired by the combo system callback (fireChargedShot)
       }
@@ -1012,10 +1122,21 @@ export class GameScene extends Phaser.Scene {
           sprite.play("player_idle", true);
         }
 
-        // Update health bar
+        // Update health bar (with shield)
         const hpBar = this.remoteHealthBars.get(sessionId);
         if (hpBar) {
-          this.drawRemoteHealthBar(hpBar, sprite.x, sprite.y, target.health);
+          this.drawRemoteHealthBar(hpBar, sprite.x, sprite.y, target.health, target.shieldHp);
+        }
+
+        // Buff tinting for remote players
+        if (target.damageMultiplier > 1.0) {
+          sprite.setTint(0xff6666); // red tint for damage buff
+        } else if (target.speedMultiplier > 1.0) {
+          sprite.setTint(0x66ccff); // blue tint for speed buff
+        } else if (target.shieldHp > 0) {
+          sprite.setTint(0xcc88ff); // purple tint for shield
+        } else {
+          sprite.setTint(0xff4444); // default enemy tint
         }
       }
     });
@@ -1063,7 +1184,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Update weapon HUD
-    this.weaponHud.update(this.localMeleeWeaponId, this.localRangedWeaponId);
+    this.weaponHud.update(this.localMeleeWeaponId, this.localRangedWeaponId, this.localConsumableSlot1, this.localConsumableSlot2, this.localHealth, this.localShieldHp);
 
     // Update match HUD
     this.matchHud.update(
@@ -1126,6 +1247,12 @@ export class GameScene extends Phaser.Scene {
   /** Get per-weapon pickup texture key */
   private getPickupTexture(weaponId: string): string {
     const key = `pickup_${weaponId}`;
+    if (this.textures.exists(key)) return key;
+    return "pickup";
+  }
+
+  private getConsumablePickupTexture(consumableId: string): string {
+    const key = `pickup_${consumableId}`;
     if (this.textures.exists(key)) return key;
     return "pickup";
   }
@@ -1266,7 +1393,7 @@ export class GameScene extends Phaser.Scene {
     this.pickupTooltip.setVisible(true);
   }
 
-  private drawRemoteHealthBar(g: Phaser.GameObjects.Graphics, x: number, y: number, health: number) {
+  private drawRemoteHealthBar(g: Phaser.GameObjects.Graphics, x: number, y: number, health: number, shieldHp = 0) {
     g.clear();
 
     const barWidth = 32;
@@ -1283,6 +1410,16 @@ export class GameScene extends Phaser.Scene {
     const color = ratio > 0.5 ? 0x00ff00 : ratio > 0.25 ? 0xffff00 : 0xff0000;
     g.fillStyle(color, 0.9);
     g.fillRect(barX, barY, barWidth * ratio, barHeight);
+
+    // Shield bar (purple, above health bar)
+    if (shieldHp > 0) {
+      const shieldY = barY - 5;
+      const shieldRatio = Math.min(1, shieldHp / 40);
+      g.fillStyle(0x000000, 0.6);
+      g.fillRect(barX - 1, shieldY - 1, barWidth + 2, 4);
+      g.fillStyle(0xdd88ff, 0.9);
+      g.fillRect(barX, shieldY, barWidth * shieldRatio, 3);
+    }
   }
 
   private getHorizontalInput(): number {

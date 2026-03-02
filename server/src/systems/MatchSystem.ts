@@ -2,6 +2,7 @@ import { Room } from "colyseus";
 import { GameStateSchema, PlayerSchema } from "../state/GameState";
 import { LootSystem } from "./LootSystem";
 import { CombatSystem } from "./CombatSystem";
+import { BuffSystem } from "./BuffSystem";
 import {
   MIN_PLAYERS_TO_START,
   COUNTDOWN_DURATION_MS,
@@ -15,6 +16,7 @@ export class MatchSystem {
   private state: GameStateSchema;
   private lootSystem: LootSystem;
   private combatSystem!: CombatSystem;
+  private buffSystem: BuffSystem | null = null;
 
   private phase: MatchPhase = "waiting";
   private countdownTimer = 0;
@@ -43,6 +45,10 @@ export class MatchSystem {
   /** Must be called after CombatSystem is created */
   setCombatSystem(combatSystem: CombatSystem) {
     this.combatSystem = combatSystem;
+  }
+
+  setBuffSystem(buffSystem: BuffSystem) {
+    this.buffSystem = buffSystem;
   }
 
   getPhase(): MatchPhase {
@@ -230,6 +236,11 @@ export class MatchSystem {
       player.state = "idle";
       player.eliminated = false;
       player.kills = 0;
+      player.shieldHp = 0;
+      player.speedMultiplier = 1.0;
+      player.damageMultiplier = 1.0;
+      player.consumableSlot1 = "";
+      player.consumableSlot2 = "";
 
       // Reset equipment
       this.lootSystem.resetPlayerEquipment(sessionId);
@@ -248,6 +259,11 @@ export class MatchSystem {
     // Reset combat (clear projectiles)
     if (this.combatSystem) {
       this.combatSystem.resetForNewMatch();
+    }
+
+    // Reset buffs
+    if (this.buffSystem) {
+      this.buffSystem.resetForNewMatch();
     }
 
     // Reset state

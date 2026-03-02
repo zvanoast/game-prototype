@@ -2,11 +2,12 @@
 
 /** Bitfield flags for player action buttons */
 export const enum Button {
-  ATTACK   = 1 << 0,  // 1
-  DASH     = 1 << 1,  // 2
-  INTERACT = 1 << 2,  // 4
-  RELOAD   = 1 << 3,  // 8
-  MELEE    = 1 << 4,  // 16
+  ATTACK         = 1 << 0,  // 1
+  DASH           = 1 << 1,  // 2
+  INTERACT       = 1 << 2,  // 4
+  RELOAD         = 1 << 3,  // 8
+  MELEE          = 1 << 4,  // 16
+  USE_CONSUMABLE = 1 << 5,  // 32
 }
 
 /** Payload sent from client to server every frame */
@@ -73,13 +74,38 @@ export enum WeaponType {
 export type WeaponSlot = "melee" | "ranged";
 
 export enum WeaponId {
-  Fists     = "fists",
-  Hammer    = "hammer",
-  Lamp      = "lamp",
-  FryingPan = "frying_pan",
-  Darts     = "darts",
-  Plates    = "plates",
-  StapleGun = "staple_gun",
+  Fists          = "fists",
+  Hammer         = "hammer",
+  Lamp           = "lamp",
+  FryingPan      = "frying_pan",
+  BaseballBat    = "baseball_bat",
+  GolfClub       = "golf_club",
+  Darts          = "darts",
+  Plates         = "plates",
+  StapleGun      = "staple_gun",
+  Vase           = "vase",
+  RubberBandGun  = "rubber_band_gun",
+}
+
+// --- Consumable ---
+
+export enum ConsumableId {
+  HealthPack   = "health_pack",
+  SpeedBoost   = "speed_boost",
+  Shield       = "shield",
+  DamageBoost  = "damage_boost",
+}
+
+export interface ConsumableConfig {
+  id: ConsumableId;
+  name: string;
+  description: string;
+  color: number;
+  healAmount?: number;
+  durationMs?: number;
+  speedMultiplier?: number;
+  damageMultiplier?: number;
+  shieldHp?: number;
 }
 
 // --- Match ---
@@ -107,4 +133,7 @@ export interface WeaponConfig {
   meleeRange?: number;
   meleeActiveFrames?: number;
   meleeCooldownMs?: number;
+  // Knockback tuning (optional per-weapon override)
+  knockback?: number;
+  meleeKnockback?: number;
 }

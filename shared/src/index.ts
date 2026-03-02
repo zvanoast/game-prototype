@@ -5,4 +5,5 @@ export * from "./map-data.js";
 export * from "./collision.js";
 export * from "./movement.js";
 export * from "./weapons.js";
+export * from "./consumables.js";
 export * from "./locker-data.js";

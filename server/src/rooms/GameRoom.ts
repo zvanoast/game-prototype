@@ -2,6 +2,7 @@ import { Room, Client } from "colyseus";
 import { GameStateSchema, PlayerSchema } from "../state/GameState";
 import { CombatSystem } from "../systems/CombatSystem";
 import { LootSystem } from "../systems/LootSystem";
+import { BuffSystem } from "../systems/BuffSystem";
 import { MatchSystem } from "../systems/MatchSystem";
 import {
   TICK_RATE,
@@ -11,6 +12,7 @@ import {
   MAX_PLAYERS_PER_ROOM,
   DASH_DISTANCE,
   DASH_DURATION_FRAMES,
+  CONSUMABLE_USE_COOLDOWN_MS,
   buildWallRects,
   resolveWallCollisions,
   applyMovement,
@@ -29,6 +31,7 @@ export class GameRoom extends Room<GameStateSchema> {
   private wallRects!: WallRect[];
   private combatSystem!: CombatSystem;
   private lootSystem!: LootSystem;
+  private buffSystem!: BuffSystem;
   private matchSystem!: MatchSystem;
 
   // Track previous buttons per player for edge detection
@@ -36,6 +39,9 @@ export class GameRoom extends Room<GameStateSchema> {
 
   // Per-player dash state
   private dashStates = new Map<string, { timeLeft: number; angle: number }>();
+
+  // Per-player consumable use cooldown (ms remaining)
+  private consumableCooldowns = new Map<string, number>();
 
   // Dash constants (derived from shared)
   private static DASH_DURATION_S = DASH_DURATION_FRAMES / 60;
@@ -51,6 +57,9 @@ export class GameRoom extends Room<GameStateSchema> {
     // Create loot system (before combat system, since combat needs it)
     this.lootSystem = new LootSystem(this, this.state);
     this.lootSystem.initLockers();
+
+    // Create buff system
+    this.buffSystem = new BuffSystem();
 
     // Create match system
     this.matchSystem = new MatchSystem(
@@ -71,7 +80,9 @@ export class GameRoom extends Room<GameStateSchema> {
 
     // Cross-wire systems
     this.combatSystem.setMatchSystem(this.matchSystem);
+    this.combatSystem.setBuffSystem(this.buffSystem);
     this.matchSystem.setCombatSystem(this.combatSystem);
+    this.matchSystem.setBuffSystem(this.buffSystem);
 
     // Sandbox mode: skip match lifecycle
     if (options?.sandbox) {
@@ -123,6 +134,7 @@ export class GameRoom extends Room<GameStateSchema> {
     this.state.players.set(client.sessionId, player);
     this.combatSystem.registerPlayer(client.sessionId);
     this.lootSystem.registerPlayer(client.sessionId);
+    this.buffSystem.registerPlayer(client.sessionId);
     this.matchSystem.onPlayerJoin(client.sessionId);
     this.prevButtons.set(client.sessionId, 0);
     console.log(`Player joined: ${client.sessionId} at (${player.x.toFixed(0)}, ${player.y.toFixed(0)})`);
@@ -131,10 +143,12 @@ export class GameRoom extends Room<GameStateSchema> {
   onLeave(client: Client) {
     this.lootSystem.unregisterPlayer(client.sessionId);
     this.combatSystem.unregisterPlayer(client.sessionId);
+    this.buffSystem.unregisterPlayer(client.sessionId);
     this.matchSystem.onPlayerLeave(client.sessionId);
     this.state.players.delete(client.sessionId);
     this.prevButtons.delete(client.sessionId);
     this.dashStates.delete(client.sessionId);
+    this.consumableCooldowns.delete(client.sessionId);
     console.log(`Player left: ${client.sessionId}`);
   }
 
@@ -226,11 +240,13 @@ export class GameRoom extends Room<GameStateSchema> {
             player.state = "idle";
           }
         } else {
-          // Normal acceleration-based movement
+          // Normal acceleration-based movement (with speed buff)
+          const speedMult = this.buffSystem.getSpeedMultiplier(sessionId);
           const moveResult = applyMovement(
             player.x, player.y,
             player.vx, player.vy,
-            dx, dy, dt
+            dx, dy, dt,
+            speedMult
           );
 
           // Shared wall collision resolution
@@ -264,13 +280,30 @@ export class GameRoom extends Room<GameStateSchema> {
       // Track last processed input for client reconciliation
       player.lastProcessedInput = input.seq;
 
-      // Detect INTERACT press (edge detection) — allowed during waiting/countdown/playing
+      // Detect INTERACT and USE_CONSUMABLE press (edge detection)
       if (!frozen) {
         const prev = this.prevButtons.get(sessionId) ?? 0;
         const interactPressed = !!(input.buttons & Button.INTERACT) && !(prev & Button.INTERACT);
         if (interactPressed) {
           this.lootSystem.processInteract(sessionId);
         }
+
+        const useConsumablePressed = !!(input.buttons & Button.USE_CONSUMABLE) && !(prev & Button.USE_CONSUMABLE);
+        if (useConsumablePressed) {
+          const cd = this.consumableCooldowns.get(sessionId) ?? 0;
+          if (cd <= 0) {
+            const consumableId = this.lootSystem.useConsumable(sessionId);
+            if (consumableId) {
+              this.buffSystem.useConsumable(sessionId, consumableId, player);
+              this.consumableCooldowns.set(sessionId, CONSUMABLE_USE_COOLDOWN_MS);
+              this.broadcast("consumable_used", {
+                sessionId,
+                consumableId,
+              });
+            }
+          }
+        }
+
         this.prevButtons.set(sessionId, input.buttons);
       }
 
@@ -289,6 +322,20 @@ export class GameRoom extends Room<GameStateSchema> {
 
     // Tick respawns
     this.combatSystem.updateRespawns(TICK_INTERVAL_MS);
+
+    // Tick buff system (decrement timers, expire buffs)
+    const expiredBuffs = this.buffSystem.tick(TICK_INTERVAL_MS, (sid) => this.state.players.get(sid));
+    for (const entry of expiredBuffs) {
+      const [sid, buffType] = entry.split(":");
+      this.broadcast("buff_expired", { sessionId: sid, buffType });
+    }
+
+    // Decrement consumable cooldowns
+    this.consumableCooldowns.forEach((cd, sid) => {
+      if (cd > 0) {
+        this.consumableCooldowns.set(sid, cd - TICK_INTERVAL_MS);
+      }
+    });
 
     // Tick match system (phase transitions, timers)
     this.matchSystem.tick(TICK_INTERVAL_MS);
