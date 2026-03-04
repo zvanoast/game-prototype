@@ -42,8 +42,9 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
-      - name: Add host key
-        run: ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Configure SSH
+        run: |
+          echo -e "Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n  LogLevel ERROR" >> ~/.ssh/config
 
       - name: Copy artifact to EC2
         run: scp deploy.tar.gz ${{ env.DEPLOY_HOST }}:~/deploy.tar.gz
