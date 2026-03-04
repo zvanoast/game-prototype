@@ -312,6 +312,43 @@
 - **Vase** (ranged): 35 dmg, 300 speed, 350 range, 5 radius, 800ms rate — heavy, short range, big projectile
 - **Rubber Band Gun** (ranged): 4 dmg, 900 speed, 700 range, 1 radius, 80ms rate — rapid-fire spam
 
+## Production Deployment — COMPLETE
+
+### CI/CD Pipeline
+- `.github/workflows/deploy.yml` — GitHub Actions workflow triggered on push to `main`
+- Path filter: only deploys when `client/`, `server/`, `shared/`, `package.json`, `package-lock.json`, `tsconfig.base.json`, `scripts/`, or the workflow itself change
+- Build on GHA runner: `npm ci` → `vite build` → `tar` artifact
+- Transfer via `webfactory/ssh-agent` + plain `scp` (replaced flaky `appleboy/scp-action`)
+- SSH deploy: extract tarball → `npm ci` → `pm2 restart`
+- Post-deploy health check with PM2 log dump on failure
+- Manual `workflow_dispatch` with `run_setup=true` option for first-time EC2 provisioning
+- 10-minute job timeout, 3-minute SSH command timeout
+
+### EC2 Setup Script (`scripts/ec2-setup.sh`)
+- Idempotent: skips already-installed components
+- Installs: Node.js 20, PM2 (with systemd autostart), nginx reverse proxy, certbot SSL
+- nginx config: proxies `game.zachvanoast.com` → `localhost:3001` with WebSocket upgrade headers
+- SSL: auto-provisions Let's Encrypt cert, skips if cert already exists
+
+### Server Production Changes
+- `server/src/index.ts` — `express.static(client/dist)` serves built client, SPA fallback route
+- `package.json` — `build:client` and `start:prod` scripts (`tsx --tsconfig tsconfig.json`)
+- `client/src/network/NetworkManager.ts` — auto-detects `ws://` vs `wss://` based on `window.location`
+- `client/src/scenes/MenuScene.ts` — auto-detects API base URL for `/api/taken-characters`
+
+### Infrastructure
+- AWS EC2 `t3.small` (2GB RAM), shared with bangabot Discord bot (Docker + Postgres on port 5432)
+- No port conflicts: game server on 3001, bangabot on 5432, nginx on 80/443
+- DNS: Route 53 A record `game.zachvanoast.com` → EC2 public IP
+- GitHub Secrets: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`
+
+### Deployment Gotchas Discovered
+- `appleboy/scp-action` hangs when transferring directories or with `rm: true` — use tarball + plain `scp` instead
+- `tsx` needs explicit `--tsconfig tsconfig.json` in production (dev script had it, prod didn't)
+- `tsconfig.base.json` must be included in deploy artifact (server tsconfig extends it)
+- `client/public/` assets must be committed to git (Vite copies them to dist during build)
+- Small EC2 instances (t2.micro, 1GB) can't handle installing Node.js + nginx + certbot + npm ci simultaneously
+
 ## Character Selection from Menu — COMPLETE
 
 ### Shared Character Data

@@ -210,6 +210,49 @@ Additional event messages:
 // "projectile_wall" — projectile hit wall (x, y, charged)
 ```
 
+## Deployment Architecture
+
+```
+                    ┌──────────────────────────┐
+                    │    GitHub Actions (CI)    │
+                    │                           │
+                    │  checkout → npm ci →      │
+                    │  vite build → tar →       │
+                    │  scp to EC2 → ssh restart │
+                    └────────────┬─────────────┘
+                                 │ scp + ssh
+                                 ▼
+┌─────────────────────────────────────────────────────┐
+│              AWS EC2 (t3.small, Ubuntu)              │
+│                                                     │
+│  ┌─────────┐    ┌──────────────────────────────┐    │
+│  │  nginx   │───▶│  Colyseus Server (port 3001) │    │
+│  │ (80/443) │    │  ├── WebSocket (game rooms)  │    │
+│  │  + SSL   │    │  ├── express.static (client) │    │
+│  └─────────┘    │  ├── /api/health              │    │
+│                  │  └── /api/taken-characters    │    │
+│                  └──────────────────────────────┘    │
+│                                                     │
+│  ┌──────────────────────────┐  ┌────────────────┐   │
+│  │  PM2 (process manager)   │  │  Docker         │   │
+│  │  └─ game-prototype       │  │  ├─ bangabot    │   │
+│  └──────────────────────────┘  │  └─ postgres    │   │
+│                                 └────────────────┘   │
+└─────────────────────────────────────────────────────┘
+```
+
+### Deploy Flow
+1. Push to `main` triggers GitHub Actions (filtered by path)
+2. GHA runner: `npm ci` → `vite build` → `tar czf deploy.tar.gz`
+3. `scp` tarball to EC2 via `webfactory/ssh-agent`
+4. `ssh` into EC2: extract tarball → `npm ci` → `pm2 restart`
+5. Health check verifies server responds on `:3001/api/health`
+
+### Production URL Detection
+Client detects environment via `window.location`:
+- **Dev** (`localhost:5173`): `ws://localhost:3001` + `http://localhost:3001/api/...`
+- **Prod** (any other host): `wss://{host}` + relative `/api/...` (same origin)
+
 ## Performance Targets (Prototype)
 
 - Client renders at 60fps

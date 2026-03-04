@@ -79,9 +79,7 @@ storage-wars/
 
 ## Current Phase
 
-**Phase 4 — Storage Wars (Complete)**
-
-Loot and weapon system with 7 weapons, storage lockers, pickups, and two equipment slots. Next up: game loop (match lifecycle, win condition, lobby).
+Character selection and production deployment complete. 9 phases of gameplay implemented. See `claude-progress.md` for full history.
 
 ## Development Commands
 
@@ -92,8 +90,44 @@ npm run dev             # Start both client (Vite) and server (Colyseus) concurr
 npm run dev:client      # Start only the Phaser client
 npm run dev:server      # Start only the Colyseus server
 npm run build           # Build all packages
+npm run build:client    # Build only the Phaser client (used in CI)
 npm run typecheck       # Type-check all packages
+npm run start:prod      # Start server in production (tsx with tsconfig)
 ```
+
+## Deployment
+
+**Production URL:** `https://game.zachvanoast.com`
+
+### Infrastructure
+- **Hosting:** AWS EC2 (`t3.small`, Ubuntu 22.04) — shared with Discord bot (bangabot)
+- **Process Manager:** PM2 (process name: `game-prototype`)
+- **Reverse Proxy:** nginx → `localhost:3001`
+- **SSL:** Let's Encrypt via certbot (auto-renewing)
+- **DNS:** Route 53 A record `game.zachvanoast.com` → EC2 public IP
+
+### CI/CD
+- **Workflow:** `.github/workflows/deploy.yml`
+- **Trigger:** Push to `main` (only when game files change — `client/`, `server/`, `shared/`, `package.json`, etc.)
+- **Process:** GHA builds client → tars artifact → SCPs to EC2 → `npm ci` + `pm2 restart`
+- **Health check:** Post-deploy curl to `/api/health`, PM2 logs dumped on failure
+- **Manual trigger:** `workflow_dispatch` with optional `run_setup=true` for infra provisioning
+
+### GitHub Secrets Required
+- `EC2_HOST` — EC2 public IP
+- `EC2_USER` — SSH username (e.g., `ubuntu`)
+- `EC2_SSH_KEY` — SSH private key (PEM)
+
+### EC2 Setup Script
+`scripts/ec2-setup.sh` is idempotent — installs Node.js 20, PM2, nginx, certbot SSL. Only runs via manual workflow dispatch with `run_setup=true`. Safe to re-run.
+
+### Production Architecture
+In production, the Colyseus server (port 3001) serves both:
+- WebSocket connections for game rooms
+- Static files from `client/dist` via `express.static`
+- SPA fallback route for client-side routing
+
+Client auto-detects dev vs prod environment via `window.location` to derive WebSocket (`ws://` vs `wss://`) and REST API URLs.
 
 ## Debug Tools
 
