@@ -35,7 +35,7 @@ jobs:
         run: npm run build:client
 
       - name: Package deploy artifact
-        run: tar czf deploy.tar.gz client/dist client/package.json server shared package.json package-lock.json scripts
+        run: tar czf deploy.tar.gz client/dist client/package.json server shared package.json package-lock.json tsconfig.base.json scripts
 
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.9.0
