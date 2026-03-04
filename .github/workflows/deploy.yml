@@ -31,19 +31,17 @@ jobs:
         run: npm run build:client
 
       - name: Package deploy artifact
-        run: tar czf deploy.tar.gz client/dist client/package.json server shared package.json package-lock.json scripts
+        run: tar czf /tmp/deploy.tar.gz client/dist client/package.json server shared package.json package-lock.json scripts
 
       - name: Copy to EC2
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          echo "$EC2_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          scp -i ~/.ssh/deploy_key deploy.tar.gz "$EC2_USER@$EC2_HOST":~/deploy.tar.gz
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: /tmp/deploy.tar.gz
+          target: ~/
+          strip_components: 1
 
       - name: EC2 setup (first deploy only)
         if: ${{ github.event.inputs.run_setup == 'true' }}
@@ -71,7 +69,7 @@ jobs:
             mkdir -p ~/game-prototype
             cd ~/game-prototype
             tar xzf ~/deploy.tar.gz
-            rm ~/deploy.tar.gz
+            rm -f ~/deploy.tar.gz
             npm ci
             pm2 restart game-prototype || pm2 start npm --name game-prototype -- run start:prod
             pm2 save
