@@ -31,7 +31,7 @@ jobs:
         run: npm run build:client
 
       - name: Package deploy artifact
-        run: tar czf /tmp/deploy.tar.gz client/dist client/package.json server shared package.json package-lock.json scripts
+        run: tar czf deploy.tar.gz client/dist client/package.json server shared package.json package-lock.json scripts
 
       - name: Copy to EC2
         uses: appleboy/scp-action@v0.1.7
@@ -39,9 +39,8 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: /tmp/deploy.tar.gz
+          source: deploy.tar.gz
           target: ~/
-          strip_components: 1
 
       - name: EC2 setup (first deploy only)
         if: ${{ github.event.inputs.run_setup == 'true' }}
