@@ -30,7 +30,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: "client/dist,server,shared,package.json,package-lock.json,scripts"
+          source: "client/dist,client/package.json,server,shared,package.json,package-lock.json,scripts"
           target: ~/game-prototype
           overwrite: true
           rm: true
@@ -53,3 +53,8 @@ jobs:
             # Start or restart the game server
             pm2 restart game-prototype || pm2 start npm --name game-prototype -- run start:prod
             pm2 save
+
+            # Wait a moment then verify the server is healthy
+            sleep 5
+            pm2 ls
+            curl -sf http://localhost:3001/api/health || { echo "--- PM2 LOGS ---"; pm2 logs game-prototype --nostream --lines 30; exit 1; }
