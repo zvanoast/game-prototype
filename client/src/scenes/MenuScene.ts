@@ -259,7 +259,9 @@ export class MenuScene extends Phaser.Scene {
 
   private async fetchTakenCharacters() {
     try {
-      const resp = await fetch("http://localhost:3001/api/taken-characters");
+      const isDev = window.location.port === "5173" || window.location.hostname === "localhost";
+      const apiBase = isDev ? "http://localhost:3001" : "";
+      const resp = await fetch(`${apiBase}/api/taken-characters`);
       const data = await resp.json();
       const arr: number[] = Array.isArray(data.taken) ? data.taken : [];
       this.takenSet = new Set(arr);

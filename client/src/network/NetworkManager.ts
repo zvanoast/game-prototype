@@ -16,8 +16,14 @@ export class NetworkManager {
   private delayQueue: QueuedMessage[] = [];
 
   constructor() {
-    // Connect directly to Colyseus server
-    this.client = new Client("ws://localhost:3001");
+    // In production (served from same origin), derive WS URL from page location.
+    // In dev (Vite on localhost:5173), connect to the Colyseus server directly.
+    const isDev = window.location.port === "5173" || window.location.hostname === "localhost";
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const serverUrl = isDev
+      ? "ws://localhost:3001"
+      : `${wsProtocol}//${window.location.host}`;
+    this.client = new Client(serverUrl);
   }
 
   async connect(options: Record<string, unknown> = {}, roomType = "game"): Promise<Room> {

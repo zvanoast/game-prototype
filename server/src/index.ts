@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import path from "path";
 import { Server, matchMaker } from "colyseus";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { monitor } from "@colyseus/monitor";
@@ -24,6 +25,10 @@ gameServer.define("sandbox", GameRoom);
 // Colyseus monitor (dev tool)
 app.use("/monitor", monitor());
 
+// In production, serve the built client files
+const clientDist = path.resolve(__dirname, "../../client/dist");
+app.use(express.static(clientDist));
+
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });
@@ -46,6 +51,11 @@ app.get("/api/taken-characters", async (_req, res) => {
   } catch {
     res.json({ taken: [] });
   }
+});
+
+// SPA fallback — serve index.html for any non-API/non-WS route
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(clientDist, "index.html"));
 });
 
 httpServer.listen(SERVER_PORT, () => {

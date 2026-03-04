@@ -12,6 +12,8 @@
     "dev:client": "npm run dev -w client",
     "dev:server": "npm run dev -w server",
     "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
+    "build:client": "npm run build -w client",
+    "start:prod": "cd server && npx tsx src/index.ts",
     "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client"
   },
   "devDependencies": {
