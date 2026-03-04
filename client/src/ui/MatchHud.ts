@@ -9,6 +9,8 @@ export interface ScoreboardEntry {
   sessionId: string;
   displayName: string;
   kills: number;
+  deaths: number;
+  wins: number;
   eliminated: boolean;
 }
 
@@ -314,48 +316,72 @@ export class MatchHud {
     }
     this.scoreboardRows = [];
 
-    // Sort by kills desc
-    const sorted = [...entries].sort((a, b) => b.kills - a.kills);
+    // Sort by wins desc, then kills desc
+    const sorted = [...entries].sort((a, b) => b.wins - a.wins || b.kills - a.kills);
 
     const rowHeight = 22;
     const maxRows = Math.min(sorted.length, 10);
-    const panelHeight = 40 + maxRows * rowHeight;
+    const headerHeight = 36;
+    const panelHeight = 40 + headerHeight + maxRows * rowHeight;
+    const panelW = 380;
 
     // Reposition title and bg
-    this.scoreboardBg.setSize(320, panelHeight);
+    this.scoreboardBg.setSize(panelW, panelHeight);
     this.scoreboardBg.setPosition(0, panelHeight / 2 - 10);
     this.scoreboardTitle.setPosition(0, 0);
+
+    // Column header
+    const colX = { name: -panelW / 2 + 10, kills: 60, deaths: 110, wins: 160 };
+    const headerY = 18;
+    const headerText = this.scene.add.text(colX.name, headerY, "Player", {
+      fontSize: "12px", fontFamily: "monospace", color: "#888888",
+    });
+    const hKills = this.scene.add.text(colX.kills, headerY, "K", {
+      fontSize: "12px", fontFamily: "monospace", color: "#888888",
+    }).setOrigin(0.5, 0);
+    const hDeaths = this.scene.add.text(colX.deaths, headerY, "D", {
+      fontSize: "12px", fontFamily: "monospace", color: "#888888",
+    }).setOrigin(0.5, 0);
+    const hWins = this.scene.add.text(colX.wins, headerY, "W", {
+      fontSize: "12px", fontFamily: "monospace", color: "#888888",
+    }).setOrigin(0.5, 0);
+    this.scoreboardContainer.add(headerText);
+    this.scoreboardContainer.add(hKills);
+    this.scoreboardContainer.add(hDeaths);
+    this.scoreboardContainer.add(hWins);
+    this.scoreboardRows.push(headerText, hKills, hDeaths, hWins);
 
     for (let i = 0; i < maxRows; i++) {
       const entry = sorted[i];
       const isLocal = entry.sessionId === localSessionId;
-      const isWinner = i === 0 && entry.kills > 0;
+      const isWinner = entry.sessionId === (sorted.length > 0 ? sorted[0].sessionId : "") && !entry.eliminated;
 
       let color = "#cccccc";
-      if (isWinner) color = "#ffcc00";
+      if (isWinner && entry.kills > 0) color = "#ffcc00";
       if (isLocal) color = "#00ff88";
 
+      const y = headerHeight + 18 + i * rowHeight;
       const status = entry.eliminated ? " (dead)" : "";
       const label = `${i + 1}. ${entry.displayName}${status}`;
-      const killsStr = `${entry.kills} kill${entry.kills !== 1 ? "s" : ""}`;
 
-      const rowText = this.scene.add.text(-140, 18 + i * rowHeight, label, {
-        fontSize: "13px",
-        fontFamily: "monospace",
-        color,
+      const nameText = this.scene.add.text(colX.name, y, label, {
+        fontSize: "13px", fontFamily: "monospace", color,
       });
-      rowText.setOrigin(0, 0);
+      const killsText = this.scene.add.text(colX.kills, y, `${entry.kills}`, {
+        fontSize: "13px", fontFamily: "monospace", color,
+      }).setOrigin(0.5, 0);
+      const deathsText = this.scene.add.text(colX.deaths, y, `${entry.deaths}`, {
+        fontSize: "13px", fontFamily: "monospace", color,
+      }).setOrigin(0.5, 0);
+      const winsText = this.scene.add.text(colX.wins, y, `${entry.wins}`, {
+        fontSize: "13px", fontFamily: "monospace", color,
+      }).setOrigin(0.5, 0);
 
-      const killsText = this.scene.add.text(140, 18 + i * rowHeight, killsStr, {
-        fontSize: "13px",
-        fontFamily: "monospace",
-        color,
-      });
-      killsText.setOrigin(1, 0);
-
-      this.scoreboardContainer.add(rowText);
+      this.scoreboardContainer.add(nameText);
       this.scoreboardContainer.add(killsText);
-      this.scoreboardRows.push(rowText, killsText);
+      this.scoreboardContainer.add(deathsText);
+      this.scoreboardContainer.add(winsText);
+      this.scoreboardRows.push(nameText, killsText, deathsText, winsText);
     }
   }
 

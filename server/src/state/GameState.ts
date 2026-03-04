@@ -20,6 +20,8 @@ export class PlayerSchema extends Schema {
   @type("int16") health: number = 100;
   @type("string") state: string = "idle";
   @type("uint8") kills: number = 0;
+  @type("uint8") deaths: number = 0;
+  @type("uint8") wins: number = 0;
   @type("uint32") lastProcessedInput: number = 0;
   @type("string") meleeWeaponId: string = "fists";
   @type("string") rangedWeaponId: string = "";

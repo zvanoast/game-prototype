@@ -8,9 +8,9 @@ const config: Phaser.Types.Core.GameConfig = {
   parent: "game",
   width: 800,
   height: 600,
-  pixelArt: true,
+  pixelArt: false,
   roundPixels: true,
-  antialias: false,
+  antialias: true,
   backgroundColor: "#1a1a2e",
   dom: {
     createContainer: true,

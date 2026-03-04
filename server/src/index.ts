@@ -39,17 +39,26 @@ app.get("/api/taken-characters", async (_req, res) => {
   try {
     const rooms = await matchMaker.query({ name: "game" });
     const taken: number[] = [];
+    const players: { name: string; characterIndex: number }[] = [];
+    let phase = "waiting";
     for (const listing of rooms) {
       const room = matchMaker.getRoomById(listing.roomId);
       if (room && room instanceof GameRoom) {
         for (const idx of room.takenCharacters) {
           if (!taken.includes(idx)) taken.push(idx);
         }
+        room.state.players.forEach((p) => {
+          players.push({
+            name: p.displayName || "NONAME",
+            characterIndex: p.characterIndex,
+          });
+        });
+        phase = room.state.phase || "waiting";
       }
     }
-    res.json({ taken });
+    res.json({ taken, players, phase });
   } catch {
-    res.json({ taken: [] });
+    res.json({ taken: [], players: [], phase: "waiting" });
   }
 });
 

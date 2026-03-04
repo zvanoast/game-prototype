@@ -431,7 +431,7 @@ export class GameScene extends Phaser.Scene {
         this.combatManager.executeDashStrike();
       },
       onChargedShot: () => {
-        if (this.network.isConnected()) {
+        if (this.network.isConnected() && !this.testMode) {
           // Multiplayer: just emit sound/juice, server drives projectile sprite
           const rangedCfg = this.combatManager.getRangedConfig();
           if (rangedCfg) {
@@ -513,6 +513,8 @@ export class GameScene extends Phaser.Scene {
           const dummy = new TestDummy(this, pos.x, pos.y, this.wallRects);
           this.dummies.push(dummy);
         }
+        // Re-register overlaps now that dummies exist
+        this.combatManager.registerDummyOverlaps();
       }
 
       // Track phase changes from state
@@ -1088,7 +1090,7 @@ export class GameScene extends Phaser.Scene {
       if (attackReleased && this.stateMachine.canShoot()) {
         const wasCharged = chargeFramesBeforeUpdate >= CHARGED_SHOT_MIN_FRAMES;
         if (!wasCharged) {
-          if (this.network.isConnected()) {
+          if (this.network.isConnected() && !this.testMode) {
             // Multiplayer: just emit muzzle flash/sound, server drives projectile sprite
             const rangedCfg = this.combatManager.getRangedConfig();
             if (rangedCfg) {
@@ -1100,7 +1102,7 @@ export class GameScene extends Phaser.Scene {
               this.events.emit("particle:muzzle", mx, my, aimAngle);
             }
           } else {
-            // Offline: use local predicted projectiles
+            // Offline or test mode: use local predicted projectiles for dummy hits
             this.combatManager.tryShoot();
           }
         }
@@ -1339,6 +1341,8 @@ export class GameScene extends Phaser.Scene {
           sessionId,
           displayName: this.playerNames.get(sessionId) ?? sessionId.substring(0, 6),
           kills: player.kills ?? 0,
+          deaths: player.deaths ?? 0,
+          wins: player.wins ?? 0,
           eliminated: player.eliminated ?? false,
         });
       });

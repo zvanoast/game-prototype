@@ -24,6 +24,13 @@ export class MenuScene extends Phaser.Scene {
   private takenSet = new Set<number>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
 
+  // Lobby panel
+  private lobbyPlayers: { name: string; characterIndex: number }[] = [];
+  private lobbyPhase = "waiting";
+  private lobbyContainer!: Phaser.GameObjects.Container;
+  private lobbyCountText!: Phaser.GameObjects.Text;
+  private lobbyBg!: Phaser.GameObjects.Rectangle;
+
   constructor() {
     super({ key: "MenuScene" });
   }
@@ -238,6 +245,30 @@ export class MenuScene extends Phaser.Scene {
       color: "#555555",
     }).setOrigin(0.5, 0.5);
 
+    // ─── Lobby panel (right side) ───────────────────────────────────────
+    const lobbyX = 660;
+    const lobbyY = 60;
+    const lobbyW = 160;
+
+    this.lobbyBg = this.add.rectangle(lobbyX, lobbyY, lobbyW, 50, 0x000000, 0.6);
+    this.lobbyBg.setOrigin(0.5, 0);
+    this.lobbyBg.setStrokeStyle(1, 0x555577);
+
+    this.add.text(lobbyX, lobbyY, "IN GAME", {
+      fontSize: "14px",
+      fontFamily: "monospace",
+      color: "#ffcc00",
+      fontStyle: "bold",
+    }).setOrigin(0.5, 0.5);
+
+    this.lobbyCountText = this.add.text(lobbyX, lobbyY + 22, "No players yet", {
+      fontSize: "11px",
+      fontFamily: "monospace",
+      color: "#aaaaaa",
+    }).setOrigin(0.5, 0.5);
+
+    this.lobbyContainer = this.add.container(lobbyX - lobbyW / 2 + 10, lobbyY + 44);
+
     // Fetch taken characters immediately, then poll
     this.fetchTakenCharacters();
     this.pollTimer = setInterval(() => this.fetchTakenCharacters(), TAKEN_POLL_MS);
@@ -265,11 +296,16 @@ export class MenuScene extends Phaser.Scene {
       const data = await resp.json();
       const arr: number[] = Array.isArray(data.taken) ? data.taken : [];
       this.takenSet = new Set(arr);
+      this.lobbyPlayers = Array.isArray(data.players) ? data.players : [];
+      this.lobbyPhase = typeof data.phase === "string" ? data.phase : "waiting";
     } catch {
       // Server unreachable — treat all as available
       this.takenSet.clear();
+      this.lobbyPlayers = [];
+      this.lobbyPhase = "waiting";
     }
     this.refreshCharacterRow();
+    this.refreshLobbyPanel();
   }
 
   // ─── Character row rendering ──────────────────────────────────────────
@@ -315,6 +351,41 @@ export class MenuScene extends Phaser.Scene {
       this.charHighlight.strokeRect(px - half, this.charY - half, half * 2, half * 2);
     }
     this.charNameLabel.setText(CHARACTER_DEFS[this.selectedCharIndex].name);
+  }
+
+  private refreshLobbyPanel() {
+    this.lobbyContainer.removeAll(true);
+
+    const count = this.lobbyPlayers.length;
+    if (this.lobbyPhase === "playing" || this.lobbyPhase === "ended") {
+      this.lobbyCountText.setText("Match in progress");
+    } else if (count === 0) {
+      this.lobbyCountText.setText("No players yet");
+    } else {
+      this.lobbyCountText.setText(`${count} player${count > 1 ? "s" : ""} waiting`);
+    }
+
+    for (let i = 0; i < this.lobbyPlayers.length; i++) {
+      const p = this.lobbyPlayers[i];
+      const y = i * 30;
+
+      const texKey = `char_preview_${p.characterIndex}`;
+      if (this.textures.exists(texKey)) {
+        const icon = this.add.sprite(12, y, texKey).setDisplaySize(24, 24).setOrigin(0.5, 0.5);
+        this.lobbyContainer.add(icon);
+      }
+
+      const name = this.add.text(28, y, p.name, {
+        fontSize: "12px",
+        fontFamily: "monospace",
+        color: "#cccccc",
+      }).setOrigin(0, 0.5);
+      this.lobbyContainer.add(name);
+    }
+
+    // Resize background to fit content: header (22px) + count text (22px) + player rows
+    const contentH = 44 + Math.max(count, 0) * 30 + 10;
+    this.lobbyBg.setSize(this.lobbyBg.width, contentH);
   }
 
   private onPlay() {

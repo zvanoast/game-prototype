@@ -50,15 +50,15 @@ export class WeaponHud {
     this.healthLabel.setDepth(HUD_DEPTH + 1);
 
     // Weapon texts (name + stats on two lines)
-    this.meleeText = scene.add.text(centerX - 6, bottomY, "[RMB] Fists", style);
-    this.meleeText.setOrigin(1, 1);
-    this.meleeText.setScrollFactor(0);
-    this.meleeText.setDepth(HUD_DEPTH);
-
-    this.rangedText = scene.add.text(centerX + 6, bottomY, "[LMB] --", style);
-    this.rangedText.setOrigin(0, 1);
+    this.rangedText = scene.add.text(centerX - 6, bottomY, "[LMB] --", style);
+    this.rangedText.setOrigin(1, 1);
     this.rangedText.setScrollFactor(0);
     this.rangedText.setDepth(HUD_DEPTH);
+
+    this.meleeText = scene.add.text(centerX + 6, bottomY, "[RMB] Fists", style);
+    this.meleeText.setOrigin(0, 1);
+    this.meleeText.setScrollFactor(0);
+    this.meleeText.setDepth(HUD_DEPTH);
 
     // Consumable text (above weapon area)
     this.consumableText = scene.add.text(centerX, bottomY - 24, "", style);

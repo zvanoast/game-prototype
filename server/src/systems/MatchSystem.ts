@@ -128,6 +128,7 @@ export class MatchSystem {
     }
 
     victim.eliminated = true;
+    victim.deaths++;
 
     this.room.broadcast("player_eliminated", {
       sessionId: victimId,
@@ -210,6 +211,7 @@ export class MatchSystem {
         if (!player.eliminated && player.state !== "dead") {
           winnerId = sessionId;
           winnerName = player.displayName || sessionId.substring(0, 6);
+          player.wins++;
         }
       });
     }

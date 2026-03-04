@@ -78,6 +78,7 @@ export function buildPlayerSheet(
     const destCtx = canvasTex.getContext();
     destCtx.drawImage(canvas, 0, 0);
     canvasTex.refresh();
+    canvasTex.setFilter(Phaser.Textures.FilterMode.NEAREST);
     for (let f = 0; f < frameCount; f++) {
       canvasTex.add(f, 0, f * size, 0, size, size);
     }
@@ -115,6 +116,15 @@ export class BootScene extends Phaser.Scene {
   }
 
   create() {
+    // Apply nearest-neighbor filtering to pixel-art source textures
+    // so they stay crisp when scaled, even with global antialias on
+    for (const key of ["kenney_chars", "kenney_tilesheet"]) {
+      const tex = this.textures.get(key);
+      if (tex?.source?.[0]?.glTexture) {
+        tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+      }
+    }
+
     this.generateTileset();
     this.generatePlayerSheet();
     this.generateCharacterSheets();
@@ -126,6 +136,13 @@ export class BootScene extends Phaser.Scene {
     this.generateDummyTexture();
     this.generateMiscTextures();
     this.registerAnimations();
+
+    // Apply nearest-neighbor to all generated sprite textures so pixel art stays crisp
+    this.textures.each((tex) => {
+      if (tex.key !== "__DEFAULT" && tex.key !== "__MISSING" && tex.key !== "__WHITE") {
+        tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+      }
+    }, this);
 
     console.log("BootScene: all assets generated (Kenney)");
     this.scene.start("MenuScene");
@@ -154,6 +171,7 @@ export class BootScene extends Phaser.Scene {
       const destCtx = tex.getContext();
       destCtx.drawImage(canvas, 0, 0);
       tex.refresh();
+      tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
     }
   }
 
@@ -206,6 +224,7 @@ export class BootScene extends Phaser.Scene {
         const destCtx = tex.getContext();
         destCtx.drawImage(canvas, 0, 0);
         tex.refresh();
+        tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
       }
     }
   }
@@ -298,6 +317,7 @@ export class BootScene extends Phaser.Scene {
         const destCtx = tex.getContext();
         destCtx.drawImage(canvas, 0, 0);
         tex.refresh();
+        tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
       }
     }
 
@@ -317,6 +337,7 @@ export class BootScene extends Phaser.Scene {
         const destCtx = tex.getContext();
         destCtx.drawImage(canvas, 0, 0);
         tex.refresh();
+        tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
       }
     }
   }

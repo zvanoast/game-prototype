@@ -121,35 +121,38 @@ export class CombatManager {
     });
 
     // Collisions: projectiles vs dummies (dummies only exist in sandbox/test mode)
-    if (this.dummies.length > 0) {
-      for (const dummy of this.dummies) {
-        this.scene.physics.add.overlap(this.projectiles, dummy, (obj1, obj2) => {
-          const proj = (obj1 !== dummy ? obj1 : obj2) as Phaser.Physics.Arcade.Sprite;
-          const damage = proj.getData("damage") ?? (this.rangedConfig?.damage ?? 15);
-          const isCharged = proj.getData("charged") ?? false;
-          const knockback = isCharged ? KNOCKBACK_CHARGED : KNOCKBACK_PROJECTILE;
-          const color = isCharged ? 0xff8800 : 0xffff00;
-
-          // Knockback angle: from player toward dummy
-          const kbAngle = Math.atan2(dummy.y - this.player.y, dummy.x - this.player.x);
-
-          this.scene.events.emit("particle:impact", proj.x, proj.y, color);
-          this.scene.events.emit("sfx:impact");
-
-          if (isCharged) {
-            this.scene.events.emit("juice:charged_hit", this.player, dummy);
-          }
-
-          this.destroyProjectile(proj);
-          dummy.takeDamage(damage, kbAngle, knockback);
-        });
-      }
-    }
+    this.registerDummyOverlaps();
 
     // Set up mouse input
     this.setupMouseInput();
 
     this.initialized = true;
+  }
+
+  /** Register projectile-vs-dummy overlaps. Can be called after dummies are spawned late. */
+  registerDummyOverlaps() {
+    if (!this.projectiles) return;
+    for (const dummy of this.dummies) {
+      this.scene.physics.add.overlap(this.projectiles, dummy, (obj1, obj2) => {
+        const proj = (obj1 !== dummy ? obj1 : obj2) as Phaser.Physics.Arcade.Sprite;
+        const damage = proj.getData("damage") ?? (this.rangedConfig?.damage ?? 15);
+        const isCharged = proj.getData("charged") ?? false;
+        const knockback = isCharged ? KNOCKBACK_CHARGED : KNOCKBACK_PROJECTILE;
+        const color = isCharged ? 0xff8800 : 0xffff00;
+
+        const kbAngle = Math.atan2(dummy.y - this.player.y, dummy.x - this.player.x);
+
+        this.scene.events.emit("particle:impact", proj.x, proj.y, color);
+        this.scene.events.emit("sfx:impact");
+
+        if (isCharged) {
+          this.scene.events.emit("juice:charged_hit", this.player, dummy);
+        }
+
+        this.destroyProjectile(proj);
+        dummy.takeDamage(damage, kbAngle, knockback);
+      });
+    }
   }
 
   private setupMouseInput() {
