@@ -7,7 +7,6 @@ export class ProjectileSchema extends Schema {
   @type("float32") angle: number = 0;
   @type("float32") speed: number = 0;
   @type("string") ownerId: string = "";
-  @type("boolean") charged: boolean = false;
   @type("string") weaponId: string = "";
 }
 

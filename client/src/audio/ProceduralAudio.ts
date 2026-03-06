@@ -50,19 +50,6 @@ export class ProceduralAudio {
     });
   }
 
-  /** Big blip — 440→1200Hz sweep, 0.12s */
-  generateChargedShot(): AudioBuffer {
-    return this.createBuffer(0.12, (buf) => {
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < data.length; i++) {
-        const t = i / this.ctx.sampleRate;
-        const freq = 440 + (1200 - 440) * (t / 0.12);
-        const env = Math.exp(-t * 15) * 0.5;
-        data[i] = Math.sin(2 * Math.PI * freq * t) * env;
-      }
-    });
-  }
-
   /** Whoosh — noise fade in/out, 0.2s */
   generateDash(): AudioBuffer {
     return this.createBuffer(0.2, (buf) => {

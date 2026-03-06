@@ -4,14 +4,10 @@ import { getWeaponConfig, WEAPON_FISTS } from "shared";
 
 import type { TestDummy } from "../entities/TestDummy";
 import {
-  CHARGED_SHOT_SPEED,
-  CHARGED_SHOT_SIZE,
-  CHARGED_SHOT_DAMAGE_MULT,
   DASH_STRIKE_RANGE_MULT,
   DASH_STRIKE_DAMAGE_MULT,
   KNOCKBACK_PROJECTILE,
   KNOCKBACK_MELEE,
-  KNOCKBACK_CHARGED,
 } from "shared";
 
 export class CombatManager {
@@ -49,9 +45,6 @@ export class CombatManager {
 
   // Aim angle (set externally)
   private aimAngle = 0;
-
-  // Charging visual
-  private chargeGraphics!: Phaser.GameObjects.Graphics;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -104,10 +97,6 @@ export class CombatManager {
     this.meleeArcGraphics.setDepth(10);
     this.meleeArcGraphics.setVisible(false);
 
-    // Charge visual
-    this.chargeGraphics = this.scene.add.graphics();
-    this.chargeGraphics.setDepth(11);
-
     // Muzzle flash sprite
     this.muzzleFlash = this.scene.add.sprite(0, 0, "muzzle_flash");
     this.muzzleFlash.setDepth(15);
@@ -137,18 +126,12 @@ export class CombatManager {
       this.scene.physics.add.overlap(this.projectiles, dummy, (obj1, obj2) => {
         const proj = (obj1 !== dummy ? obj1 : obj2) as Phaser.Physics.Arcade.Sprite;
         const damage = proj.getData("damage") ?? (this.rangedConfig?.damage ?? 15);
-        const isCharged = proj.getData("charged") ?? false;
-        const knockback = isCharged ? KNOCKBACK_CHARGED : KNOCKBACK_PROJECTILE;
-        const color = isCharged ? 0xff8800 : 0xffff00;
+        const knockback = KNOCKBACK_PROJECTILE;
 
         const kbAngle = Math.atan2(dummy.y - this.player.y, dummy.x - this.player.x);
 
-        this.scene.events.emit("particle:impact", proj.x, proj.y, color);
+        this.scene.events.emit("particle:impact", proj.x, proj.y, 0xffff00);
         this.scene.events.emit("sfx:impact");
-
-        if (isCharged) {
-          this.scene.events.emit("juice:charged_hit", this.player, dummy);
-        }
 
         this.destroyProjectile(proj);
         dummy.takeDamage(damage, kbAngle, knockback);
@@ -189,36 +172,12 @@ export class CombatManager {
       this.rangedConfig.projectileSpeed ?? 600,
       this.rangedConfig.damage ?? 15,
       this.rangedConfig.projectileRadius ?? 2,
-      this.rangedConfig.projectileRange ?? 800,
-      false
+      this.rangedConfig.projectileRange ?? 800
     );
 
     this.scene.events.emit("sfx:shoot_weapon", this.rangedConfig?.id ?? "");
     this.scene.events.emit("juice:shoot", this.aimAngle);
     return true;
-  }
-
-  /** Charged shot */
-  fireChargedShot() {
-    if (!this.initialized) return;
-    if (!this.rangedConfig) return;
-
-    this.lastShootTime = this.scene.time.now;
-
-    const baseDamage = this.rangedConfig.damage ?? 15;
-    const baseRange = this.rangedConfig.projectileRange ?? 800;
-
-    this.fireProjectile(
-      CHARGED_SHOT_SPEED,
-      baseDamage * CHARGED_SHOT_DAMAGE_MULT,
-      CHARGED_SHOT_SIZE / 2,
-      baseRange * 1.5,
-      true,
-      0xff8800
-    );
-
-    this.scene.events.emit("sfx:charged_shot");
-    this.scene.events.emit("juice:charged_shot", this.aimAngle);
   }
 
   /** Per-weapon animation configs for local projectiles */
@@ -232,7 +191,6 @@ export class CombatManager {
     staple_gun:      { rotationSpeed: 0 },
     vase:            { rotationSpeed: 180, scalePulse: { min: 0.95, max: 1.05, duration: 300 } },
     rubber_band_gun: { rotationSpeed: 0, scalePulse: { min: 0.8, max: 1.2, duration: 100 } },
-    charged:         { rotationSpeed: 360, scalePulse: { min: 1.5, max: 2.2, duration: 200 }, alphaPulse: { min: 0.7, max: 1.0, duration: 200 } },
   };
 
   /** Get weapon-specific projectile texture key */
@@ -248,9 +206,8 @@ export class CombatManager {
   }
 
   /** Apply tween animations to a projectile sprite */
-  private applyProjectileTweens(proj: Phaser.Physics.Arcade.Sprite, weaponId: string, charged: boolean): void {
-    const configKey = charged ? "charged" : weaponId;
-    const cfg = CombatManager.PROJ_ANIM_CONFIGS[configKey];
+  private applyProjectileTweens(proj: Phaser.Physics.Arcade.Sprite, weaponId: string): void {
+    const cfg = CombatManager.PROJ_ANIM_CONFIGS[weaponId];
     if (!cfg) return;
 
     const tweens: Phaser.Tweens.Tween[] = [];
@@ -266,11 +223,10 @@ export class CombatManager {
     }
 
     if (cfg.scalePulse) {
-      const baseScale = charged ? 2 : 1;
       tweens.push(this.scene.tweens.add({
         targets: proj,
-        scaleX: { from: cfg.scalePulse.min * baseScale, to: cfg.scalePulse.max * baseScale },
-        scaleY: { from: cfg.scalePulse.min * baseScale, to: cfg.scalePulse.max * baseScale },
+        scaleX: { from: cfg.scalePulse.min, to: cfg.scalePulse.max },
+        scaleY: { from: cfg.scalePulse.min, to: cfg.scalePulse.max },
         duration: cfg.scalePulse.duration,
         yoyo: true,
         repeat: -1,
@@ -298,9 +254,7 @@ export class CombatManager {
     speed: number,
     damage: number,
     radius: number,
-    range: number,
-    charged: boolean,
-    tint?: number
+    range: number
   ) {
     const vx = Math.cos(this.aimAngle) * speed;
     const vy = Math.sin(this.aimAngle) * speed;
@@ -317,24 +271,17 @@ export class CombatManager {
     proj.setPosition(sx, sy);
     proj.setData("damage", damage);
     proj.setData("range", range);
-    proj.setData("charged", charged);
 
     // Swap to weapon-specific texture
     const weaponId = this.rangedConfig?.id ?? "";
-    if (charged) {
-      proj.setTexture("proj_charged");
-      proj.setTint(tint ?? 0xff8800);
-      proj.setScale(2);
+    proj.setTexture(this.getProjectileTextureKey(weaponId));
+    const color = this.rangedConfig?.projectileColor;
+    if (color !== undefined) {
+      proj.setTint(color);
     } else {
-      proj.setTexture(this.getProjectileTextureKey(weaponId));
-      const color = this.rangedConfig?.projectileColor;
-      if (color !== undefined) {
-        proj.setTint(color);
-      } else {
-        proj.clearTint();
-      }
-      proj.setScale(1);
+      proj.clearTint();
     }
+    proj.setScale(1);
 
     // Set rotation to face travel direction
     proj.setRotation(this.aimAngle);
@@ -347,7 +294,7 @@ export class CombatManager {
     this.projectileOrigins.set(proj, { x: sx, y: sy });
 
     // Apply per-weapon tween animations
-    this.applyProjectileTweens(proj, weaponId, charged);
+    this.applyProjectileTweens(proj, weaponId);
 
     // Muzzle flash
     this.muzzleFlash.setPosition(sx, sy);
@@ -440,26 +387,6 @@ export class CombatManager {
       }
     }
     this.projectileOrigins.delete(proj);
-  }
-
-  updateChargeVisual(isCharging: boolean, chargeFrames: number, minFrames: number) {
-    this.chargeGraphics.clear();
-    if (!this.initialized || !isCharging || chargeFrames < 5) return;
-    if (!this.rangedConfig) return; // Can't charge without ranged weapon
-
-    const progress = Math.min(chargeFrames / minFrames, 1);
-    const radius = 20 + progress * 10;
-    const alpha = 0.2 + progress * 0.4;
-    const color = progress >= 1 ? 0xff8800 : 0xffff00;
-
-    this.chargeGraphics.lineStyle(2, color, alpha);
-    this.chargeGraphics.strokeCircle(this.player.x, this.player.y, radius);
-
-    if (progress >= 1) {
-      const pulse = Math.sin(this.scene.time.now / 80) * 0.15 + 0.35;
-      this.chargeGraphics.fillStyle(color, pulse);
-      this.chargeGraphics.fillCircle(this.player.x, this.player.y, radius - 2);
-    }
   }
 
   update(_time: number, _delta: number) {

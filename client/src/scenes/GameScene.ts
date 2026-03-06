@@ -23,17 +23,13 @@ import {
   MAX_HEALTH,
   LOCKER_INTERACT_RANGE,
   PICKUP_INTERACT_RANGE,
-  CHARGED_SHOT_MIN_FRAMES,
   SHAKE_SHOOT_MAG,
   SHAKE_SHOOT_DURATION,
   SHAKE_MELEE_HIT_MAG,
   SHAKE_MELEE_HIT_DURATION,
-  SHAKE_CHARGED_SHOT_MAG,
-  SHAKE_CHARGED_SHOT_DURATION,
   SHAKE_DAMAGE_MAG,
   SHAKE_DAMAGE_DURATION,
   HITSTOP_MELEE_MS,
-  HITSTOP_CHARGED_MS,
   applyMovement,
   resolveWallCollisions,
   buildWallRects,
@@ -431,22 +427,6 @@ export class GameScene extends Phaser.Scene {
       onDashStrike: () => {
         this.combatManager.executeDashStrike();
       },
-      onChargedShot: () => {
-        if (this.network.isConnected() && !this.testMode) {
-          // Multiplayer: just emit sound/juice, server drives projectile sprite
-          const rangedCfg = this.combatManager.getRangedConfig();
-          if (rangedCfg) {
-            this.events.emit("sfx:charged_shot");
-            this.events.emit("juice:charged_shot", this.combatManager.getAimAngle());
-            const spawnDist = 20;
-            const px = this.localPlayer!.x + Math.cos(this.combatManager.getAimAngle()) * spawnDist;
-            const py = this.localPlayer!.y + Math.sin(this.combatManager.getAimAngle()) * spawnDist;
-            this.events.emit("particle:muzzle", px, py, this.combatManager.getAimAngle());
-          }
-        } else {
-          this.combatManager.fireChargedShot();
-        }
-      },
     });
   }
 
@@ -454,17 +434,6 @@ export class GameScene extends Phaser.Scene {
     // Screen shake on shoot
     this.events.on("juice:shoot", (_angle: number) => {
       this.screenShake.shake(SHAKE_SHOOT_MAG, SHAKE_SHOOT_DURATION);
-    });
-
-    // Screen shake + hit-stop on charged shot fire
-    this.events.on("juice:charged_shot", (_angle: number) => {
-      this.screenShake.shake(SHAKE_CHARGED_SHOT_MAG, SHAKE_CHARGED_SHOT_DURATION);
-    });
-
-    // Hit-stop + shake on charged projectile hit
-    this.events.on("juice:charged_hit", (attacker: Phaser.GameObjects.Sprite, target: Phaser.GameObjects.Sprite) => {
-      this.screenShake.shake(SHAKE_CHARGED_SHOT_MAG, SHAKE_CHARGED_SHOT_DURATION);
-      this.hitStop.freeze(HITSTOP_CHARGED_MS, [attacker, target]);
     });
 
     // Screen shake + hit-stop on melee hit
@@ -788,15 +757,10 @@ export class GameScene extends Phaser.Scene {
 
       // Listen for server projectile state changes
       room.state.projectiles.onAdd((proj: any, _key: number) => {
-        const texKey = proj.charged
-          ? "proj_charged"
-          : this.getProjectileTexture(proj.weaponId ?? "");
+        const texKey = this.getProjectileTexture(proj.weaponId ?? "");
         const sprite = this.add.sprite(proj.x, proj.y, texKey);
         sprite.setDepth(8);
         sprite.setOrigin(0.5, 0.5);
-        if (proj.charged) {
-          sprite.setScale(2);
-        }
         // Set initial rotation to face travel direction
         if (proj.vx !== undefined && proj.vy !== undefined) {
           sprite.setRotation(Math.atan2(proj.vy, proj.vx));
@@ -804,15 +768,15 @@ export class GameScene extends Phaser.Scene {
         this.serverProjectileSprites.set(proj.id, sprite);
 
         // Apply per-weapon tween animations
-        const animTweens = this.applyProjectileAnimation(sprite, proj.weaponId ?? "", proj.charged);
+        const animTweens = this.applyProjectileAnimation(sprite, proj.weaponId ?? "");
         if (animTweens.length > 0) {
           this.serverProjectileTweens.set(proj.id, animTweens);
         }
 
         // Attach projectile trail (per-weapon config)
         const weaponCfg = getWeaponConfig(proj.weaponId ?? "");
-        const trailColor = proj.charged ? 0xff8800 : (weaponCfg?.projectileColor ?? 0xffff00);
-        const trailCleanup = this.particles.projectileTrail(sprite, trailColor, proj.charged ? "charged" : (proj.weaponId ?? ""));
+        const trailColor = weaponCfg?.projectileColor ?? 0xffff00;
+        const trailCleanup = this.particles.projectileTrail(sprite, trailColor, proj.weaponId ?? "");
         this.serverProjectileTrailCleanups.set(proj.id, trailCleanup);
 
         proj.onChange(() => {
@@ -841,7 +805,7 @@ export class GameScene extends Phaser.Scene {
         const sprite = this.serverProjectileSprites.get(proj.id);
         if (sprite) {
           // Impact particles on removal
-          this.particles.impact(proj.x, proj.y, proj.charged ? 0xff8800 : 0xffff00);
+          this.particles.impact(proj.x, proj.y, 0xffff00);
           sprite.destroy();
           this.serverProjectileSprites.delete(proj.id);
         }
@@ -853,7 +817,7 @@ export class GameScene extends Phaser.Scene {
         this.events.emit("damage:number", data.x, data.y, data.damage);
 
         // Impact particles
-        const color = data.type === "charged" ? 0xff8800 : data.type === "melee" ? 0xffffff : 0xffff00;
+        const color = data.type === "melee" ? 0xffffff : 0xffff00;
         this.particles.impact(data.x, data.y, color);
 
         // Screen shake if local player was hit
@@ -931,7 +895,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("projectile_wall", (data: any) => {
-        this.particles.impact(data.x, data.y, data.charged ? 0xff8800 : 0xffff00);
+        this.particles.impact(data.x, data.y, 0xffff00);
       });
 
       room.onMessage("locker_opened", (data: any) => {
@@ -1036,17 +1000,11 @@ export class GameScene extends Phaser.Scene {
     if (this.keys.SPACE.isDown) buttons |= Button.DASH;
     this.attackHeld = leftDown;
 
-    // Snapshot charge frames before updateCharging resets them on release
-    const chargeFramesBeforeUpdate = this.stateMachine.getChargeFrames();
-
     // Record input to buffer
     this.inputBuffer.recordFrame(dx, dy, buttons, aimAngle);
 
     // Run combo detection
     this.comboDetector.update();
-
-    // Update state machine charging tracker
-    this.stateMachine.updateCharging(this.attackHeld);
 
     // Update state machine (tick timers, return dash state if dashing)
     const dashState = this.stateMachine.update();
@@ -1106,33 +1064,22 @@ export class GameScene extends Phaser.Scene {
       // come from server state so they properly disappear on hit.
       const attackReleased = this.prevAttackHeld && !leftDown;
       if (attackReleased && this.stateMachine.canShoot()) {
-        const wasCharged = chargeFramesBeforeUpdate >= CHARGED_SHOT_MIN_FRAMES;
-        if (!wasCharged) {
-          if (this.network.isConnected() && !this.testMode) {
-            // Multiplayer: just emit muzzle flash/sound, server drives projectile sprite
-            const rangedCfg = this.combatManager.getRangedConfig();
-            if (rangedCfg) {
-              this.events.emit("sfx:shoot_weapon", rangedCfg.id);
-              this.events.emit("juice:shoot", aimAngle);
-              const spawnDist = 20;
-              const mx = this.localPlayer!.x + Math.cos(aimAngle) * spawnDist;
-              const my = this.localPlayer!.y + Math.sin(aimAngle) * spawnDist;
-              this.events.emit("particle:muzzle", mx, my, aimAngle);
-            }
-          } else {
-            // Offline or test mode: use local predicted projectiles for dummy hits
-            this.combatManager.tryShoot();
+        if (this.network.isConnected() && !this.testMode) {
+          // Multiplayer: just emit muzzle flash/sound, server drives projectile sprite
+          const rangedCfg = this.combatManager.getRangedConfig();
+          if (rangedCfg) {
+            this.events.emit("sfx:shoot_weapon", rangedCfg.id);
+            this.events.emit("juice:shoot", aimAngle);
+            const spawnDist = 20;
+            const mx = this.localPlayer!.x + Math.cos(aimAngle) * spawnDist;
+            const my = this.localPlayer!.y + Math.sin(aimAngle) * spawnDist;
+            this.events.emit("particle:muzzle", mx, my, aimAngle);
           }
+        } else {
+          // Offline or test mode: use local predicted projectiles for dummy hits
+          this.combatManager.tryShoot();
         }
-        // Charged shots are fired by the combo system callback (fireChargedShot)
       }
-
-      // Update charge visual
-      this.combatManager.updateChargeVisual(
-        this.stateMachine.isCharging(),
-        this.stateMachine.getChargeFrames(),
-        CHARGED_SHOT_MIN_FRAMES
-      );
     }
 
     this.prevAttackHeld = leftDown;
@@ -1308,7 +1255,6 @@ export class GameScene extends Phaser.Scene {
       aimAngle,
       comboState: this.stateMachine.getState(),
       lastCombo: this.comboDetector.getLastDetected(),
-      chargeFrames: this.stateMachine.getChargeFrames(),
       inputBufferHistory: this.inputBuffer.getHistory(30),
       pendingInputCount: this.pendingInputs.length,
       artificialLatency: this.network.getArtificialDelay(),
@@ -1347,14 +1293,12 @@ export class GameScene extends Phaser.Scene {
     staple_gun:      { rotationSpeed: 0 },
     vase:            { rotationSpeed: 180, scalePulse: { min: 0.95, max: 1.05, duration: 300 } },
     rubber_band_gun: { rotationSpeed: 0, scalePulse: { min: 0.8, max: 1.2, duration: 100 } },
-    charged:         { rotationSpeed: 360, scalePulse: { min: 1.5, max: 2.2, duration: 200 }, alphaPulse: { min: 0.7, max: 1.0, duration: 200 } },
   };
 
   /** Apply per-weapon tween animations to a projectile sprite. Returns tweens for cleanup. */
-  private applyProjectileAnimation(sprite: Phaser.GameObjects.Sprite, weaponId: string, charged: boolean): Phaser.Tweens.Tween[] {
+  private applyProjectileAnimation(sprite: Phaser.GameObjects.Sprite, weaponId: string): Phaser.Tweens.Tween[] {
     const tweens: Phaser.Tweens.Tween[] = [];
-    const configKey = charged ? "charged" : weaponId;
-    const cfg = GameScene.PROJECTILE_ANIM_CONFIGS[configKey];
+    const cfg = GameScene.PROJECTILE_ANIM_CONFIGS[weaponId];
     if (!cfg) return tweens;
 
     // Rotation: 0 = face travel direction (set externally), >0 = continuous spin
@@ -1371,11 +1315,10 @@ export class GameScene extends Phaser.Scene {
 
     // Scale pulse
     if (cfg.scalePulse) {
-      const baseScale = charged ? 2 : 1;
       tweens.push(this.tweens.add({
         targets: sprite,
-        scaleX: { from: cfg.scalePulse.min * baseScale, to: cfg.scalePulse.max * baseScale },
-        scaleY: { from: cfg.scalePulse.min * baseScale, to: cfg.scalePulse.max * baseScale },
+        scaleX: { from: cfg.scalePulse.min, to: cfg.scalePulse.max },
+        scaleY: { from: cfg.scalePulse.min, to: cfg.scalePulse.max },
         duration: cfg.scalePulse.duration,
         yoyo: true,
         repeat: -1,

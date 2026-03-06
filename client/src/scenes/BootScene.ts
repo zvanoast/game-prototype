@@ -294,14 +294,6 @@ export class BootScene extends Phaser.Scene {
       }
     }
 
-    // Charged shot stays procedural (glow effect)
-    const chargedGfx = this.add.graphics();
-    chargedGfx.fillStyle(0xff8800, 0.4);
-    chargedGfx.fillCircle(4, 4, 4);
-    chargedGfx.fillStyle(0xffaa00, 1);
-    chargedGfx.fillCircle(4, 4, 2.5);
-    chargedGfx.generateTexture("proj_charged", 8, 8);
-    chargedGfx.destroy();
   }
 
   /** Procedural fallback when a tilesheet tile is empty */

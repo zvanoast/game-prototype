@@ -24,7 +24,6 @@ export class SoundManager {
     this.buffers.set("shoot", gen.generateShoot());
     this.buffers.set("melee_swing", gen.generateMeleeSwing());
     this.buffers.set("melee_hit", gen.generateMeleeHit());
-    this.buffers.set("charged_shot", gen.generateChargedShot());
     this.buffers.set("dash", gen.generateDash());
     this.buffers.set("dash_strike", gen.generateDashStrike());
     this.buffers.set("impact", gen.generateImpact());
@@ -69,7 +68,6 @@ export class SoundManager {
     scene.events.on("sfx:shoot", () => this.play("shoot", 0.4), this);
     scene.events.on("sfx:melee_hit", () => this.play("melee_hit", 0.5), this);
     scene.events.on("sfx:melee_swing", () => this.play("melee_swing", 0.3), this);
-    scene.events.on("sfx:charged_shot", () => this.play("charged_shot", 0.5), this);
     scene.events.on("sfx:dash", () => this.play("dash", 0.3), this);
     scene.events.on("sfx:dash_strike", () => this.play("dash_strike", 0.4), this);
     scene.events.on("sfx:impact", () => this.play("impact", 0.3), this);
@@ -101,7 +99,6 @@ export class SoundManager {
       scene.events.off("sfx:shoot", undefined, this);
       scene.events.off("sfx:melee_hit", undefined, this);
       scene.events.off("sfx:melee_swing", undefined, this);
-      scene.events.off("sfx:charged_shot", undefined, this);
       scene.events.off("sfx:dash", undefined, this);
       scene.events.off("sfx:dash_strike", undefined, this);
       scene.events.off("sfx:impact", undefined, this);

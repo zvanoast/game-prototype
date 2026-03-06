@@ -9,10 +9,6 @@ import {
   MAX_HEALTH,
   RESPAWN_TIME_MS,
   MAX_SERVER_PROJECTILES,
-  CHARGED_SHOT_SPEED,
-  CHARGED_SHOT_DAMAGE_MULT,
-  CHARGED_SHOT_SIZE,
-  CHARGED_SHOT_MIN_FRAMES,
   DASH_STRIKE_RANGE_MULT,
   DASH_STRIKE_DAMAGE_MULT,
   TICK_RATE,
@@ -23,7 +19,6 @@ interface PlayerCombatState {
   lastShootTick: number;
   lastMeleeTick: number;
   lastButtons: number;
-  chargeFrameCount: number;
   respawnTimer: number; // ms remaining, 0 = alive
 }
 
@@ -34,7 +29,6 @@ interface ServerProjectile {
   angle: number;
   speed: number;
   ownerId: string;
-  charged: boolean;
   damage: number;
   radius: number;
   originX: number;
@@ -82,7 +76,6 @@ export class CombatSystem {
       lastShootTick: -100,
       lastMeleeTick: -100,
       lastButtons: 0,
-      chargeFrameCount: 0,
       respawnTimer: 0,
     });
   }
@@ -105,23 +98,16 @@ export class CombatSystem {
     // If combat is not allowed (waiting, countdown, ended), just track buttons
     if (this.matchSystem && !this.matchSystem.canAttack()) {
       combat.lastButtons = buttons;
-      combat.chargeFrameCount = 0;
       return;
     }
 
     const attackDown = !!(buttons & Button.ATTACK);
     const attackWasDown = !!(prevButtons & Button.ATTACK);
-    const attackPressed = attackDown && !attackWasDown;
     const attackReleased = !attackDown && attackWasDown;
 
     const meleeDown = !!(buttons & Button.MELEE);
     const meleeWasDown = !!(prevButtons & Button.MELEE);
     const meleePressed = meleeDown && !meleeWasDown;
-
-    // Track charge frames
-    if (attackDown) {
-      combat.chargeFrameCount++;
-    }
 
     // Get per-player weapon configs
     const rangedConfig = this.lootSystem.getPlayerRangedConfig(sessionId);
@@ -137,15 +123,10 @@ export class CombatSystem {
       (meleeConfig.meleeCooldownMs ?? 400) / (1000 / TICK_RATE)
     ));
 
-    // Fire on release: short hold = normal shot, long hold = charged shot
+    // Fire on release
     if (attackReleased && rangedConfig && (tick - combat.lastShootTick >= shootCooldownTicks)) {
-      const charged = combat.chargeFrameCount >= CHARGED_SHOT_MIN_FRAMES;
-      this.fireProjectile(sessionId, player, charged, rangedConfig);
+      this.fireProjectile(sessionId, player, rangedConfig);
       combat.lastShootTick = tick;
-    }
-
-    if (attackReleased) {
-      combat.chargeFrameCount = 0;
     }
 
     // Melee pressed — enhanced if dashing (dash strike)
@@ -163,21 +144,16 @@ export class CombatSystem {
   private fireProjectile(
     sessionId: string,
     player: PlayerSchema,
-    charged: boolean,
     rangedConfig: import("shared").WeaponConfig
   ) {
     if (this.projectiles.length >= MAX_SERVER_PROJECTILES) return;
 
     const damageMult = this.buffSystem?.getDamageMultiplier(sessionId) ?? 1.0;
     const baseDamage = rangedConfig.damage ?? 15;
-    const baseSpeed = rangedConfig.projectileSpeed ?? 600;
-    const baseRadius = rangedConfig.projectileRadius ?? 2;
-    const baseRange = rangedConfig.projectileRange ?? 800;
-
-    const speed = charged ? CHARGED_SHOT_SPEED : baseSpeed;
-    const damage = Math.round((charged ? baseDamage * CHARGED_SHOT_DAMAGE_MULT : baseDamage) * damageMult);
-    const radius = charged ? CHARGED_SHOT_SIZE / 2 : baseRadius;
-    const maxRange = charged ? baseRange * 1.5 : baseRange;
+    const speed = rangedConfig.projectileSpeed ?? 600;
+    const radius = rangedConfig.projectileRadius ?? 2;
+    const maxRange = rangedConfig.projectileRange ?? 800;
+    const damage = Math.round(baseDamage * damageMult);
 
     const spawnDist = 20;
     const sx = player.x + Math.cos(player.angle) * spawnDist;
@@ -193,7 +169,6 @@ export class CombatSystem {
       angle: player.angle,
       speed,
       ownerId: sessionId,
-      charged,
       damage,
       radius,
       originX: sx,
@@ -291,7 +266,7 @@ export class CombatSystem {
         }
       }
       if (hitWall) {
-        this.room.broadcast("projectile_wall", { x: proj.x, y: proj.y, charged: proj.charged });
+        this.room.broadcast("projectile_wall", { x: proj.x, y: proj.y });
         toRemove.push(i);
         continue;
       }
@@ -306,7 +281,7 @@ export class CombatSystem {
         const hitRadius = PLAYER_RADIUS + proj.radius;
 
         if (this.lineCircleIntersect(prevX, prevY, proj.x, proj.y, target.x, target.y, hitRadius)) {
-          this.applyDamage(targetId, target, proj.damage, proj.ownerId, proj.charged ? "charged" : "projectile");
+          this.applyDamage(targetId, target, proj.damage, proj.ownerId, "projectile");
           hitPlayer = true;
         }
       });
@@ -336,7 +311,7 @@ export class CombatSystem {
     target: PlayerSchema,
     damage: number,
     attackerId: string,
-    type: "projectile" | "charged" | "melee"
+    type: "projectile" | "melee"
   ) {
     // Route through shield first
     let actualDamage = damage;
@@ -423,7 +398,6 @@ export class CombatSystem {
 
         // Reset combat state
         combat.lastButtons = 0;
-        combat.chargeFrameCount = 0;
 
         this.room.broadcast("respawn", {
           sessionId,
@@ -443,7 +417,6 @@ export class CombatSystem {
       combat.lastShootTick = -100;
       combat.lastMeleeTick = -100;
       combat.lastButtons = 0;
-      combat.chargeFrameCount = 0;
       combat.respawnTimer = 0;
     });
   }
@@ -460,7 +433,6 @@ export class CombatSystem {
     schema.angle = proj.angle;
     schema.speed = proj.speed;
     schema.ownerId = proj.ownerId;
-    schema.charged = proj.charged;
     schema.weaponId = proj.weaponId;
     this.state.projectiles.push(schema);
   }

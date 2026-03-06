@@ -14,7 +14,6 @@ export interface DebugData {
   aimAngle?: number;
   comboState?: string;
   lastCombo?: string | null;
-  chargeFrames?: number;
   inputBufferHistory?: InputFrame[];
   pendingInputCount?: number;
   artificialLatency?: number;
@@ -101,7 +100,6 @@ export class DebugOverlay {
     const aim = data.aimAngle ?? 0;
     const comboState = data.comboState ?? "?";
     const lastCombo = data.lastCombo ?? "none";
-    const chargeFrames = data.chargeFrames ?? 0;
     const pendingInputs = data.pendingInputCount ?? 0;
     const artLatency = data.artificialLatency ?? 0;
     const localHealth = data.localHealth ?? 0;
@@ -128,7 +126,7 @@ export class DebugOverlay {
     this.texts[10].setText(`Shoot CD: ${shootCD.toFixed(0)}ms  Melee CD: ${meleeCD.toFixed(0)}ms`);
     this.texts[11].setText(`Aim: ${Phaser.Math.RadToDeg(aim).toFixed(1)}°`);
     this.texts[12].setText(`State: ${comboState}`);
-    this.texts[13].setText(`Last Combo: ${lastCombo}  Charge: ${chargeFrames}`);
+    this.texts[13].setText(`Last Combo: ${lastCombo}`);
     const matchPhase = data.matchPhase ?? "?";
     const alivePlayers = data.alivePlayers ?? 0;
     const localEliminated = data.localEliminated ?? false;

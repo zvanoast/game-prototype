@@ -1,5 +1,4 @@
 import {
-  CHARGED_SHOT_MIN_FRAMES,
   DASH_STRIKE_WINDOW_FRAMES,
 } from "./constants.js";
 
@@ -51,28 +50,6 @@ export const COMBO_DASH: ComboDefinition = {
 };
 
 /**
- * Charged Shot: hold attack button for 20+ frames, then release.
- */
-export const COMBO_CHARGED_SHOT: ComboDefinition = {
-  name: "charged_shot",
-  steps: [
-    {
-      condition: {
-        type: "button_hold",
-        param: 1, // Button.ATTACK
-        minFrames: CHARGED_SHOT_MIN_FRAMES,
-      },
-      windowFrames: 0,
-    },
-    {
-      condition: { type: "button_release", param: 1 },
-      windowFrames: 5, // release must come soon after hold threshold
-    },
-  ],
-  cooldownTicks: 30,
-};
-
-/**
  * Dash-Strike: press spacebar to dash, then right-click melee within 10 frames.
  * Acts as a strong melee with damage multiplier.
  */
@@ -95,6 +72,5 @@ export const COMBO_DASH_STRIKE: ComboDefinition = {
  *  so they match before shorter sub-sequences. */
 export const ALL_COMBOS: ComboDefinition[] = [
   COMBO_DASH_STRIKE,
-  COMBO_CHARGED_SHOT,
   COMBO_DASH,
 ];

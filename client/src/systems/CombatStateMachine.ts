@@ -27,14 +27,9 @@ export class CombatStateMachine {
   // Dash
   private dashState: DashState | null = null;
 
-  // Charged shot
-  private chargeFrames = 0;
-  private charging = false;
-
   // Callbacks for combo execution
   private onDash: ((angle: number, speed: number) => void) | null = null;
   private onDashStrike: (() => void) | null = null;
-  private onChargedShot: (() => void) | null = null;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -50,11 +45,9 @@ export class CombatStateMachine {
   setCallbacks(callbacks: {
     onDash: (angle: number, speed: number) => void;
     onDashStrike: () => void;
-    onChargedShot: () => void;
   }) {
     this.onDash = callbacks.onDash;
     this.onDashStrike = callbacks.onDashStrike;
-    this.onChargedShot = callbacks.onChargedShot;
   }
 
   private handleCombo(comboName: string) {
@@ -64,9 +57,6 @@ export class CombatStateMachine {
         break;
       case "dash_strike":
         this.tryDashStrike();
-        break;
-      case "charged_shot":
-        this.tryChargedShot();
         break;
     }
   }
@@ -107,37 +97,10 @@ export class CombatStateMachine {
     this.scene.events.emit("state:dash_strike");
   }
 
-  private tryChargedShot() {
-    if (
-      this.state !== PlayerState.Idle &&
-      this.state !== PlayerState.Moving
-    ) {
-      return;
-    }
-
-    this.state = PlayerState.Attacking;
-    this.stateTimer = 6; // brief lockout frames
-
-    if (this.onChargedShot) this.onChargedShot();
-
-    this.scene.events.emit("state:charged_shot");
-  }
-
   /** Set the dash direction angle (called by GameScene based on movement input) */
   setDashAngle(angle: number) {
     if (this.dashState) {
       this.dashState.angle = angle;
-    }
-  }
-
-  /** Track attack button hold for charging visual */
-  updateCharging(attackHeld: boolean) {
-    if (attackHeld) {
-      this.chargeFrames++;
-      this.charging = true;
-    } else {
-      this.chargeFrames = 0;
-      this.charging = false;
     }
   }
 
@@ -199,21 +162,11 @@ export class CombatStateMachine {
     );
   }
 
-  isCharging(): boolean {
-    return this.charging;
-  }
-
-  getChargeFrames(): number {
-    return this.chargeFrames;
-  }
-
   /** Reset to idle (e.g., on respawn) */
   reset() {
     this.state = PlayerState.Idle;
     this.stateTimer = 0;
     this.dashState = null;
-    this.chargeFrames = 0;
-    this.charging = false;
   }
 
   /** Transition to moving state (called by GameScene when player has input) */

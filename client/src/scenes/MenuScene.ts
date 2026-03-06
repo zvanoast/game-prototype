@@ -212,7 +212,6 @@ export class MenuScene extends Phaser.Scene {
       "RMB          Melee",
       "E            Interact (lockers)",
       "SPACE        Dash",
-      "Hold LMB     Charged shot",
     ];
 
     const controlsText = this.add.text(0, 0, controls.join("\n"), {

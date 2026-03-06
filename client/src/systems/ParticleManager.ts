@@ -89,7 +89,6 @@ export class ParticleManager {
     staple_gun:      { scaleStart: 0.15, frequency: 50, lifespan: 120 },
     vase:            { scaleStart: 0.6,  frequency: 15, lifespan: 300 },
     rubber_band_gun: { scaleStart: 0.2,  frequency: 60, lifespan: 150 },
-    charged:         { scaleStart: 0.8,  frequency: 15, lifespan: 300, speed: { min: 10, max: 30 } },
   };
 
   /** Projectile trail: continuous emitter following a sprite. Returns cleanup function. */
@@ -119,19 +118,4 @@ export class ParticleManager {
     };
   }
 
-  /** Charged shot impact: larger, brighter burst */
-  chargedImpact(x: number, y: number) {
-    const emitter = this.scene.add.particles(x, y, "particle", {
-      speed: { min: 80, max: 250 },
-      scale: { start: 1.2, end: 0 },
-      alpha: { start: 1, end: 0 },
-      lifespan: 400,
-      angle: { min: 0, max: 360 },
-      tint: 0xff8800,
-      emitting: false,
-    });
-    emitter.setDepth(20);
-    emitter.explode(12);
-    this.scene.time.delayedCall(500, () => emitter.destroy());
-  }
 }
