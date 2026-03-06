@@ -399,6 +399,27 @@ export class LootSystem {
     }
   }
 
+  /** Spawn one pickup per lootable weapon and consumable in a grid near map center */
+  spawnAllItems() {
+    const centerX = 1024;
+    const centerY = 1024;
+    const spacing = 40;
+
+    // Weapons row (centered above map center)
+    const wCount = LOOTABLE_WEAPON_IDS.length;
+    const wStartX = centerX - ((wCount - 1) * spacing) / 2;
+    for (let i = 0; i < wCount; i++) {
+      this.spawnPickup(wStartX + i * spacing, centerY - 30, LOOTABLE_WEAPON_IDS[i], "");
+    }
+
+    // Consumables row (centered below map center)
+    const cCount = LOOTABLE_CONSUMABLE_IDS.length;
+    const cStartX = centerX - ((cCount - 1) * spacing) / 2;
+    for (let i = 0; i < cCount; i++) {
+      this.spawnPickup(cStartX + i * spacing, centerY + 30, "", LOOTABLE_CONSUMABLE_IDS[i]);
+    }
+  }
+
   /** Reset all loot for a new match: clear pickups, re-pick random locker subset */
   resetForNewMatch() {
     // Clear all pickups

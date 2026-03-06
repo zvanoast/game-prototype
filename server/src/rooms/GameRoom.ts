@@ -89,9 +89,10 @@ export class GameRoom extends Room<GameStateSchema> {
     this.matchSystem.setCombatSystem(this.combatSystem);
     this.matchSystem.setBuffSystem(this.buffSystem);
 
-    // Sandbox mode: skip match lifecycle
+    // Sandbox mode: skip match lifecycle, spawn all items
     if (options?.sandbox) {
       this.matchSystem.enableSandbox();
+      this.lootSystem.spawnAllItems();
       console.log("Sandbox mode enabled");
     }
 

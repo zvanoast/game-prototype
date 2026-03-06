@@ -7,6 +7,9 @@ const SHIELD_HEIGHT = 6;
 const BAR_GAP = 2;
 const HUD_DEPTH = 800;
 
+/** Vertical offset from top of screen to health bar (below test-mode label) */
+const TOP_MARGIN = 40;
+
 export class WeaponHud {
   private scene: Phaser.Scene;
   private barGraphics: Phaser.GameObjects.Graphics;
@@ -33,13 +36,13 @@ export class WeaponHud {
       padding: { x: 6, y: 4 },
     };
 
-    // Health/shield bar graphics (drawn every frame)
+    // Health/shield bar graphics (drawn every frame, top of screen)
     this.barGraphics = scene.add.graphics();
     this.barGraphics.setScrollFactor(0);
     this.barGraphics.setDepth(HUD_DEPTH);
 
     // Health text label (overlaid on bar)
-    this.healthLabel = scene.add.text(centerX, bottomY - 68, "", {
+    this.healthLabel = scene.add.text(centerX, TOP_MARGIN + BAR_HEIGHT / 2, "", {
       fontSize: "11px",
       fontFamily: "monospace",
       color: "#ffffff",
@@ -49,7 +52,13 @@ export class WeaponHud {
     this.healthLabel.setScrollFactor(0);
     this.healthLabel.setDepth(HUD_DEPTH + 1);
 
-    // Weapon texts (name + stats on two lines)
+    // Consumable text (above weapon texts at bottom)
+    this.consumableText = scene.add.text(centerX, bottomY - 48, "", style);
+    this.consumableText.setOrigin(0.5, 1);
+    this.consumableText.setScrollFactor(0);
+    this.consumableText.setDepth(HUD_DEPTH);
+
+    // Weapon texts at the bottom (name + stats on two lines)
     this.rangedText = scene.add.text(centerX - 6, bottomY, "[LMB] --", style);
     this.rangedText.setOrigin(1, 1);
     this.rangedText.setScrollFactor(0);
@@ -59,12 +68,6 @@ export class WeaponHud {
     this.meleeText.setOrigin(0, 1);
     this.meleeText.setScrollFactor(0);
     this.meleeText.setDepth(HUD_DEPTH);
-
-    // Consumable text (above weapon area)
-    this.consumableText = scene.add.text(centerX, bottomY - 24, "", style);
-    this.consumableText.setOrigin(0.5, 1);
-    this.consumableText.setScrollFactor(0);
-    this.consumableText.setDepth(HUD_DEPTH);
   }
 
   update(
@@ -75,16 +78,11 @@ export class WeaponHud {
     health = MAX_HEALTH,
     shieldHp = 0
   ) {
-    // Recalculate vertical layout based on consumable row presence
     const cam = this.scene.cameras.main;
     const centerX = cam.width / 2;
-    const bottomY = cam.height - 16;
-    const hasConsumables = !!(consumable1 || consumable2);
-    const consumableRowH = hasConsumables ? 28 : 0;
-    const barY = bottomY - consumableRowH - 50;
 
-    // Draw health + shield bars
-    this.drawBars(centerX, barY, health, shieldHp);
+    // Draw health + shield bars at top of screen
+    this.drawBars(centerX, TOP_MARGIN, health, shieldHp);
 
     // Update weapon names + stats (combined into one text each)
     if (meleeWeaponId !== this.lastMeleeId) {
