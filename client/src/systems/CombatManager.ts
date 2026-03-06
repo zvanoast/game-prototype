@@ -31,6 +31,7 @@ export class CombatManager {
   // Projectile pool
   private projectiles!: Phaser.Physics.Arcade.Group;
   private projectileOrigins = new Map<Phaser.GameObjects.GameObject, { x: number; y: number }>();
+  private projectileTweens = new Map<Phaser.GameObjects.GameObject, Phaser.Tweens.Tween[]>();
 
   // Cooldowns
   private lastShootTime = 0;
@@ -220,6 +221,79 @@ export class CombatManager {
     this.scene.events.emit("juice:charged_shot", this.aimAngle);
   }
 
+  /** Per-weapon animation configs for local projectiles */
+  private static readonly PROJ_ANIM_CONFIGS: Record<string, {
+    rotationSpeed?: number;
+    scalePulse?: { min: number; max: number; duration: number };
+    alphaPulse?: { min: number; max: number; duration: number };
+  }> = {
+    darts:           { rotationSpeed: 0 },
+    plates:          { rotationSpeed: 720, scalePulse: { min: 0.9, max: 1.1, duration: 150 } },
+    staple_gun:      { rotationSpeed: 0 },
+    vase:            { rotationSpeed: 180, scalePulse: { min: 0.95, max: 1.05, duration: 300 } },
+    rubber_band_gun: { rotationSpeed: 0, scalePulse: { min: 0.8, max: 1.2, duration: 100 } },
+    charged:         { rotationSpeed: 360, scalePulse: { min: 1.5, max: 2.2, duration: 200 }, alphaPulse: { min: 0.7, max: 1.0, duration: 200 } },
+  };
+
+  /** Get weapon-specific projectile texture key */
+  private getProjectileTextureKey(weaponId: string): string {
+    switch (weaponId) {
+      case "darts": return "proj_darts";
+      case "plates": return "proj_plates";
+      case "staple_gun": return "proj_staple_gun";
+      case "vase": return "proj_vase";
+      case "rubber_band_gun": return "proj_rubber_band_gun";
+      default: return "proj_default";
+    }
+  }
+
+  /** Apply tween animations to a projectile sprite */
+  private applyProjectileTweens(proj: Phaser.Physics.Arcade.Sprite, weaponId: string, charged: boolean): void {
+    const configKey = charged ? "charged" : weaponId;
+    const cfg = CombatManager.PROJ_ANIM_CONFIGS[configKey];
+    if (!cfg) return;
+
+    const tweens: Phaser.Tweens.Tween[] = [];
+
+    if (cfg.rotationSpeed && cfg.rotationSpeed > 0) {
+      tweens.push(this.scene.tweens.add({
+        targets: proj,
+        angle: 360,
+        duration: 360 / cfg.rotationSpeed * 1000,
+        repeat: -1,
+        ease: "Linear",
+      }));
+    }
+
+    if (cfg.scalePulse) {
+      const baseScale = charged ? 2 : 1;
+      tweens.push(this.scene.tweens.add({
+        targets: proj,
+        scaleX: { from: cfg.scalePulse.min * baseScale, to: cfg.scalePulse.max * baseScale },
+        scaleY: { from: cfg.scalePulse.min * baseScale, to: cfg.scalePulse.max * baseScale },
+        duration: cfg.scalePulse.duration,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.easeInOut",
+      }));
+    }
+
+    if (cfg.alphaPulse) {
+      tweens.push(this.scene.tweens.add({
+        targets: proj,
+        alpha: { from: cfg.alphaPulse.min, to: cfg.alphaPulse.max },
+        duration: cfg.alphaPulse.duration,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.easeInOut",
+      }));
+    }
+
+    if (tweens.length > 0) {
+      this.projectileTweens.set(proj, tweens);
+    }
+  }
+
   private fireProjectile(
     speed: number,
     damage: number,
@@ -244,11 +318,15 @@ export class CombatManager {
     proj.setData("damage", damage);
     proj.setData("range", range);
     proj.setData("charged", charged);
-    if (tint) {
-      proj.setTint(tint);
+
+    // Swap to weapon-specific texture
+    const weaponId = this.rangedConfig?.id ?? "";
+    if (charged) {
+      proj.setTexture("proj_charged");
+      proj.setTint(tint ?? 0xff8800);
       proj.setScale(2);
     } else {
-      // Tint projectile with weapon color
+      proj.setTexture(this.getProjectileTextureKey(weaponId));
       const color = this.rangedConfig?.projectileColor;
       if (color !== undefined) {
         proj.setTint(color);
@@ -257,11 +335,19 @@ export class CombatManager {
       }
       proj.setScale(1);
     }
+
+    // Set rotation to face travel direction
+    proj.setRotation(this.aimAngle);
+    proj.setAlpha(1);
+
     proj.body!.enable = true;
     (proj.body as Phaser.Physics.Arcade.Body).setVelocity(vx, vy);
     (proj.body as Phaser.Physics.Arcade.Body).setCircle(radius);
 
     this.projectileOrigins.set(proj, { x: sx, y: sy });
+
+    // Apply per-weapon tween animations
+    this.applyProjectileTweens(proj, weaponId, charged);
 
     // Muzzle flash
     this.muzzleFlash.setPosition(sx, sy);
@@ -333,10 +419,20 @@ export class CombatManager {
   }
 
   private destroyProjectile(proj: Phaser.Physics.Arcade.Sprite) {
+    // Clean up tweens first
+    const tweens = this.projectileTweens.get(proj);
+    if (tweens) {
+      for (const tw of tweens) { tw.destroy(); }
+      this.projectileTweens.delete(proj);
+    }
+
     proj.setActive(false);
     proj.setVisible(false);
     proj.clearTint();
     proj.setScale(1);
+    proj.setRotation(0);
+    proj.setAlpha(1);
+    proj.setTexture("projectile");
     if (proj.body) {
       proj.body.enable = false;
       if ("setVelocity" in proj.body) {

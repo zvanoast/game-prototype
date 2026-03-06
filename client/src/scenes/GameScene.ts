@@ -151,6 +151,7 @@ export class GameScene extends Phaser.Scene {
   // Server projectile sprites (keyed by projectile id)
   private serverProjectileSprites = new Map<number, Phaser.GameObjects.Sprite>();
   private serverProjectileTrailCleanups = new Map<number, () => void>();
+  private serverProjectileTweens = new Map<number, Phaser.Tweens.Tween[]>();
 
   // Lockers
   private lockerSprites = new Map<number, Phaser.GameObjects.Sprite>();
@@ -796,12 +797,22 @@ export class GameScene extends Phaser.Scene {
         if (proj.charged) {
           sprite.setScale(2);
         }
+        // Set initial rotation to face travel direction
+        if (proj.vx !== undefined && proj.vy !== undefined) {
+          sprite.setRotation(Math.atan2(proj.vy, proj.vx));
+        }
         this.serverProjectileSprites.set(proj.id, sprite);
 
-        // Attach projectile trail
+        // Apply per-weapon tween animations
+        const animTweens = this.applyProjectileAnimation(sprite, proj.weaponId ?? "", proj.charged);
+        if (animTweens.length > 0) {
+          this.serverProjectileTweens.set(proj.id, animTweens);
+        }
+
+        // Attach projectile trail (per-weapon config)
         const weaponCfg = getWeaponConfig(proj.weaponId ?? "");
         const trailColor = proj.charged ? 0xff8800 : (weaponCfg?.projectileColor ?? 0xffff00);
-        const trailCleanup = this.particles.projectileTrail(sprite, trailColor);
+        const trailCleanup = this.particles.projectileTrail(sprite, trailColor, proj.charged ? "charged" : (proj.weaponId ?? ""));
         this.serverProjectileTrailCleanups.set(proj.id, trailCleanup);
 
         proj.onChange(() => {
@@ -813,6 +824,13 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.state.projectiles.onRemove((proj: any, _key: number) => {
+        // Clean up tweens
+        const tweens = this.serverProjectileTweens.get(proj.id);
+        if (tweens) {
+          this.cleanupProjectileTweens(tweens);
+          this.serverProjectileTweens.delete(proj.id);
+        }
+
         // Clean up trail
         const trailCleanup = this.serverProjectileTrailCleanups.get(proj.id);
         if (trailCleanup) {
@@ -1311,7 +1329,79 @@ export class GameScene extends Phaser.Scene {
       case "darts": return "proj_darts";
       case "plates": return "proj_plates";
       case "staple_gun": return "proj_staple_gun";
+      case "vase": return "proj_vase";
+      case "rubber_band_gun": return "proj_rubber_band_gun";
       default: return "proj_default";
+    }
+  }
+
+  // ─── Projectile animation configs ────────────────────────────────────
+
+  private static readonly PROJECTILE_ANIM_CONFIGS: Record<string, {
+    rotationSpeed?: number; // deg/s (0 = face travel direction)
+    scalePulse?: { min: number; max: number; duration: number };
+    alphaPulse?: { min: number; max: number; duration: number };
+  }> = {
+    darts:           { rotationSpeed: 0 },
+    plates:          { rotationSpeed: 720, scalePulse: { min: 0.9, max: 1.1, duration: 150 } },
+    staple_gun:      { rotationSpeed: 0 },
+    vase:            { rotationSpeed: 180, scalePulse: { min: 0.95, max: 1.05, duration: 300 } },
+    rubber_band_gun: { rotationSpeed: 0, scalePulse: { min: 0.8, max: 1.2, duration: 100 } },
+    charged:         { rotationSpeed: 360, scalePulse: { min: 1.5, max: 2.2, duration: 200 }, alphaPulse: { min: 0.7, max: 1.0, duration: 200 } },
+  };
+
+  /** Apply per-weapon tween animations to a projectile sprite. Returns tweens for cleanup. */
+  private applyProjectileAnimation(sprite: Phaser.GameObjects.Sprite, weaponId: string, charged: boolean): Phaser.Tweens.Tween[] {
+    const tweens: Phaser.Tweens.Tween[] = [];
+    const configKey = charged ? "charged" : weaponId;
+    const cfg = GameScene.PROJECTILE_ANIM_CONFIGS[configKey];
+    if (!cfg) return tweens;
+
+    // Rotation: 0 = face travel direction (set externally), >0 = continuous spin
+    if (cfg.rotationSpeed && cfg.rotationSpeed > 0) {
+      const degsPerMs = cfg.rotationSpeed / 1000;
+      tweens.push(this.tweens.add({
+        targets: sprite,
+        angle: 360,
+        duration: 360 / cfg.rotationSpeed * 1000,
+        repeat: -1,
+        ease: "Linear",
+      }));
+    }
+
+    // Scale pulse
+    if (cfg.scalePulse) {
+      const baseScale = charged ? 2 : 1;
+      tweens.push(this.tweens.add({
+        targets: sprite,
+        scaleX: { from: cfg.scalePulse.min * baseScale, to: cfg.scalePulse.max * baseScale },
+        scaleY: { from: cfg.scalePulse.min * baseScale, to: cfg.scalePulse.max * baseScale },
+        duration: cfg.scalePulse.duration,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.easeInOut",
+      }));
+    }
+
+    // Alpha pulse
+    if (cfg.alphaPulse) {
+      tweens.push(this.tweens.add({
+        targets: sprite,
+        alpha: { from: cfg.alphaPulse.min, to: cfg.alphaPulse.max },
+        duration: cfg.alphaPulse.duration,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.easeInOut",
+      }));
+    }
+
+    return tweens;
+  }
+
+  /** Clean up tweens for a projectile (destroy + remove from map) */
+  private cleanupProjectileTweens(tweens: Phaser.Tweens.Tween[]) {
+    for (const tw of tweens) {
+      tw.destroy();
     }
   }
 

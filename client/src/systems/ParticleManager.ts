@@ -80,14 +80,32 @@ export class ParticleManager {
     this.scene.time.delayedCall(600, () => emitter.destroy());
   }
 
+  /** Per-weapon trail tuning */
+  private static readonly TRAIL_CONFIGS: Record<string, {
+    scaleStart: number; frequency: number; lifespan: number; speed?: { min: number; max: number };
+  }> = {
+    darts:           { scaleStart: 0.2,  frequency: 40, lifespan: 150 },
+    plates:          { scaleStart: 0.5,  frequency: 20, lifespan: 200, speed: { min: 10, max: 30 } },
+    staple_gun:      { scaleStart: 0.15, frequency: 50, lifespan: 120 },
+    vase:            { scaleStart: 0.6,  frequency: 15, lifespan: 300 },
+    rubber_band_gun: { scaleStart: 0.2,  frequency: 60, lifespan: 150 },
+    charged:         { scaleStart: 0.8,  frequency: 15, lifespan: 300, speed: { min: 10, max: 30 } },
+  };
+
   /** Projectile trail: continuous emitter following a sprite. Returns cleanup function. */
-  projectileTrail(sprite: Phaser.GameObjects.Sprite, color: number): () => void {
+  projectileTrail(sprite: Phaser.GameObjects.Sprite, color: number, weaponId?: string): () => void {
+    const cfg = weaponId ? ParticleManager.TRAIL_CONFIGS[weaponId] : undefined;
+    const scaleStart = cfg?.scaleStart ?? 0.4;
+    const frequency = cfg?.frequency ?? 30;
+    const lifespan = cfg?.lifespan ?? 200;
+    const speed = cfg?.speed ?? { min: 5, max: 20 };
+
     const emitter = this.scene.add.particles(0, 0, "particle", {
-      speed: { min: 5, max: 20 },
-      scale: { start: 0.4, end: 0 },
+      speed,
+      scale: { start: scaleStart, end: 0 },
       alpha: { start: 0.6, end: 0 },
-      lifespan: 200,
-      frequency: 30,
+      lifespan,
+      frequency,
       tint: color,
       follow: sprite,
       emitting: true,
@@ -97,7 +115,7 @@ export class ParticleManager {
     return () => {
       emitter.stop();
       // Let remaining particles fade out, then destroy
-      this.scene.time.delayedCall(300, () => emitter.destroy());
+      this.scene.time.delayedCall(lifespan + 100, () => emitter.destroy());
     };
   }
 

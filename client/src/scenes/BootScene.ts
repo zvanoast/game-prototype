@@ -229,43 +229,72 @@ export class BootScene extends Phaser.Scene {
     }
   }
 
-  // ─── Projectile textures ────────────────────────────────────────────
+  // ─── Projectile textures (tilesheet extraction + procedural fallback) ──
+
+  /** Tilesheet [col, row] → output pixel size for each projectile type */
+  private static readonly PROJ_TILE_PICKS: { key: string; col: number; row: number; size: number }[] = [
+    { key: "proj_darts",           col: 24, row: 4,  size: 12 },
+    { key: "proj_plates",          col: 22, row: 8,  size: 16 },
+    { key: "proj_staple_gun",      col: 26, row: 5,  size: 6  },
+    { key: "proj_vase",            col: 20, row: 8,  size: 20 },
+    { key: "proj_rubber_band_gun", col: 25, row: 5,  size: 8  },
+    { key: "proj_default",         col: 21, row: 5,  size: 8  },
+  ];
 
   private generateProjectileTextures() {
-    // Default yellow circle (4x4)
-    const defaultGfx = this.add.graphics();
-    defaultGfx.fillStyle(0xffff00, 1);
-    defaultGfx.fillCircle(2, 2, 2);
-    defaultGfx.generateTexture("projectile", 4, 4);
-    defaultGfx.generateTexture("proj_default", 4, 4);
-    defaultGfx.destroy();
+    const K = 64; // Kenney tile size
+    const source = this.textures.get("kenney_tilesheet").getSourceImage() as HTMLImageElement;
 
-    // Darts: thin red needle (4x6)
-    const dartGfx = this.add.graphics();
-    dartGfx.fillStyle(0xff4444, 1);
-    dartGfx.fillRect(1, 0, 2, 6);
-    dartGfx.fillStyle(0xff6666, 1);
-    dartGfx.fillRect(0, 0, 4, 2);
-    dartGfx.generateTexture("proj_darts", 4, 6);
-    dartGfx.destroy();
+    for (const pick of BootScene.PROJ_TILE_PICKS) {
+      const canvas = document.createElement("canvas");
+      canvas.width = pick.size;
+      canvas.height = pick.size;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(source, pick.col * K, pick.row * K, K, K, 0, 0, pick.size, pick.size);
 
-    // Plates: white disc (10x10)
-    const plateGfx = this.add.graphics();
-    plateGfx.fillStyle(0xeeeeff, 1);
-    plateGfx.fillCircle(5, 5, 5);
-    plateGfx.lineStyle(1, 0xccccdd, 0.6);
-    plateGfx.strokeCircle(5, 5, 3);
-    plateGfx.generateTexture("proj_plates", 10, 10);
-    plateGfx.destroy();
+      // Check for non-transparent pixels — fall back to procedural if tile was empty
+      const pixels = ctx.getImageData(0, 0, pick.size, pick.size).data;
+      let hasContent = false;
+      for (let i = 3; i < pixels.length; i += 4) {
+        if (pixels[i] > 10) { hasContent = true; break; }
+      }
 
-    // Staple gun: orange rect (3x3)
-    const stapleGfx = this.add.graphics();
-    stapleGfx.fillStyle(0xff8800, 1);
-    stapleGfx.fillRect(0, 0, 3, 3);
-    stapleGfx.generateTexture("proj_staple_gun", 3, 3);
-    stapleGfx.destroy();
+      if (hasContent) {
+        const tex = this.textures.createCanvas(pick.key, pick.size, pick.size);
+        if (tex) {
+          const destCtx = tex.getContext();
+          destCtx.drawImage(canvas, 0, 0);
+          tex.refresh();
+          tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+        }
+      } else {
+        this.generateProceduralProjectile(pick.key, pick.size);
+      }
+    }
 
-    // Charged shot: orange glow (8x8)
+    // "projectile" alias (pool defaultKey in CombatManager) — same as proj_default
+    if (!this.textures.exists("projectile")) {
+      const gfx = this.add.graphics();
+      gfx.fillStyle(0xffff00, 1);
+      gfx.fillCircle(4, 4, 4);
+      gfx.generateTexture("projectile", 8, 8);
+      gfx.destroy();
+    } else {
+      // Copy proj_default into "projectile" alias
+      const src = this.textures.get("proj_default").getSourceImage() as HTMLImageElement | HTMLCanvasElement;
+      const sz = 8;
+      const c = document.createElement("canvas");
+      c.width = sz; c.height = sz;
+      c.getContext("2d")!.drawImage(src, 0, 0, sz, sz);
+      const tex = this.textures.createCanvas("projectile", sz, sz);
+      if (tex) {
+        tex.getContext().drawImage(c, 0, 0);
+        tex.refresh();
+        tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+      }
+    }
+
+    // Charged shot stays procedural (glow effect)
     const chargedGfx = this.add.graphics();
     chargedGfx.fillStyle(0xff8800, 0.4);
     chargedGfx.fillCircle(4, 4, 4);
@@ -273,22 +302,45 @@ export class BootScene extends Phaser.Scene {
     chargedGfx.fillCircle(4, 4, 2.5);
     chargedGfx.generateTexture("proj_charged", 8, 8);
     chargedGfx.destroy();
+  }
 
-    // Vase: large purple circle (12x12)
-    const vaseGfx = this.add.graphics();
-    vaseGfx.fillStyle(0x8844aa, 1);
-    vaseGfx.fillCircle(6, 6, 6);
-    vaseGfx.lineStyle(1, 0xaa66cc, 0.5);
-    vaseGfx.strokeCircle(6, 6, 4);
-    vaseGfx.generateTexture("proj_vase", 12, 12);
-    vaseGfx.destroy();
-
-    // Rubber band gun: tiny yellow line (4x2)
-    const rbGfx = this.add.graphics();
-    rbGfx.fillStyle(0xffdd44, 1);
-    rbGfx.fillRect(0, 0, 4, 2);
-    rbGfx.generateTexture("proj_rubber_band_gun", 4, 2);
-    rbGfx.destroy();
+  /** Procedural fallback when a tilesheet tile is empty */
+  private generateProceduralProjectile(key: string, size: number) {
+    const gfx = this.add.graphics();
+    switch (key) {
+      case "proj_darts":
+        gfx.fillStyle(0xff4444, 1);
+        gfx.fillRect(size / 2 - 1, 0, 2, size);
+        gfx.fillStyle(0xff6666, 1);
+        gfx.fillRect(0, 0, size, Math.max(2, size / 3));
+        break;
+      case "proj_plates":
+        gfx.fillStyle(0xeeeeff, 1);
+        gfx.fillCircle(size / 2, size / 2, size / 2);
+        gfx.lineStyle(1, 0xccccdd, 0.6);
+        gfx.strokeCircle(size / 2, size / 2, size / 3);
+        break;
+      case "proj_staple_gun":
+        gfx.fillStyle(0xff8800, 1);
+        gfx.fillRect(0, 0, size, size);
+        break;
+      case "proj_vase":
+        gfx.fillStyle(0x8844aa, 1);
+        gfx.fillCircle(size / 2, size / 2, size / 2);
+        gfx.lineStyle(1, 0xaa66cc, 0.5);
+        gfx.strokeCircle(size / 2, size / 2, size / 3);
+        break;
+      case "proj_rubber_band_gun":
+        gfx.fillStyle(0xffdd44, 1);
+        gfx.fillRect(0, size / 4, size, size / 2);
+        break;
+      default:
+        gfx.fillStyle(0xffff00, 1);
+        gfx.fillCircle(size / 2, size / 2, size / 2);
+        break;
+    }
+    gfx.generateTexture(key, size, size);
+    gfx.destroy();
   }
 
   // ─── Locker textures (from Kenney tilesheet) ─────────────────────────
