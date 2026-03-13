@@ -34,25 +34,35 @@ export class SoundManager {
     this.buffers.set("countdown_beep", gen.generateCountdownBeep());
     this.buffers.set("match_start", gen.generateMatchStart());
 
-    // Per-weapon shoot sounds
-    this.buffers.set("shoot_darts", gen.generateShoot_darts());
-    this.buffers.set("shoot_plates", gen.generateShoot_plates());
-    this.buffers.set("shoot_staple_gun", gen.generateShoot_staple_gun());
-    this.buffers.set("shoot_vase", gen.generateShoot_vase());
-    this.buffers.set("shoot_rubber_band_gun", gen.generateShoot_rubber_band_gun());
+    // Per-weapon shoot/throw sounds
+    this.buffers.set("shoot_records", gen.generateShoot_records());
+    this.buffers.set("shoot_box_of_antiques", gen.generateShoot_box_of_antiques());
+    this.buffers.set("shoot_knife_set", gen.generateShoot_knife_set());
+    this.buffers.set("shoot_rare_coins", gen.generateShoot_rare_coins());
+    this.buffers.set("shoot_paint_cans", gen.generateShoot_paint_cans());
+    this.buffers.set("shoot_microwave", gen.generateShoot_microwave());
+    this.buffers.set("shoot_bb_gun", gen.generateShoot_bb_gun());
 
     // Per-weapon melee sounds
     this.buffers.set("melee_fists", gen.generateMelee_fists());
-    this.buffers.set("melee_hammer", gen.generateMelee_hammer());
-    this.buffers.set("melee_lamp", gen.generateMelee_lamp());
-    this.buffers.set("melee_frying_pan", gen.generateMelee_frying_pan());
-    this.buffers.set("melee_baseball_bat", gen.generateMelee_baseball_bat());
-    this.buffers.set("melee_golf_club", gen.generateMelee_golf_club());
+    this.buffers.set("melee_oboe", gen.generateMelee_oboe());
+    this.buffers.set("melee_signed_baseball_bat", gen.generateMelee_signed_baseball_bat());
+    this.buffers.set("melee_ceremonial_sword", gen.generateMelee_ceremonial_sword());
+    this.buffers.set("melee_skis", gen.generateMelee_skis());
+    this.buffers.set("melee_kayak", gen.generateMelee_kayak());
+    this.buffers.set("melee_rusty_power_drill", gen.generateMelee_rusty_power_drill());
+    this.buffers.set("melee_indian_rug", gen.generateMelee_indian_rug());
 
     // Consumable/buff sounds
     this.buffers.set("consumable_use", gen.generateConsumableUse());
     this.buffers.set("shield_hit", gen.generateShieldHit());
     this.buffers.set("buff_expired", gen.generateBuffExpired());
+
+    // Vehicle sounds
+    this.buffers.set("vehicle_mount", gen.generateVehicleMount());
+    this.buffers.set("vehicle_dismount", gen.generateVehicleDismount());
+    this.buffers.set("vehicle_destroyed", gen.generateVehicleDestroyed());
+    this.buffers.set("vehicle_hit", gen.generateVehicleHit());
 
     // Handle browser autoplay policy
     const resumeAudio = () => {
@@ -95,6 +105,12 @@ export class SoundManager {
     scene.events.on("sfx:shield_hit", () => this.play("shield_hit", 0.4), this);
     scene.events.on("sfx:buff_expired", () => this.play("buff_expired", 0.3), this);
 
+    // Vehicle events
+    scene.events.on("sfx:vehicle_mount", () => this.play("vehicle_mount", 0.4), this);
+    scene.events.on("sfx:vehicle_dismount", () => this.play("vehicle_dismount", 0.3), this);
+    scene.events.on("sfx:vehicle_destroyed", () => this.play("vehicle_destroyed", 0.5), this);
+    scene.events.on("sfx:vehicle_hit", () => this.play("vehicle_hit", 0.4), this);
+
     scene.events.once("shutdown", () => {
       scene.events.off("sfx:shoot", undefined, this);
       scene.events.off("sfx:melee_hit", undefined, this);
@@ -113,6 +129,10 @@ export class SoundManager {
       scene.events.off("sfx:consumable_use", undefined, this);
       scene.events.off("sfx:shield_hit", undefined, this);
       scene.events.off("sfx:buff_expired", undefined, this);
+      scene.events.off("sfx:vehicle_mount", undefined, this);
+      scene.events.off("sfx:vehicle_dismount", undefined, this);
+      scene.events.off("sfx:vehicle_destroyed", undefined, this);
+      scene.events.off("sfx:vehicle_hit", undefined, this);
       this.audioCtx.close();
     });
   }

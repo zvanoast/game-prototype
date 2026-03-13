@@ -25,6 +25,7 @@ import {
 interface PlayerEquipment {
   meleeWeaponId: string;
   rangedWeaponId: string;
+  rangedAmmo: number;
   consumableSlot1: string;
   consumableSlot2: string;
 }
@@ -80,6 +81,7 @@ export class LootSystem {
     const equip: PlayerEquipment = {
       meleeWeaponId: WeaponId.Fists,
       rangedWeaponId: "",
+      rangedAmmo: 0,
       consumableSlot1: "",
       consumableSlot2: "",
     };
@@ -90,6 +92,7 @@ export class LootSystem {
     if (player) {
       player.meleeWeaponId = equip.meleeWeaponId;
       player.rangedWeaponId = equip.rangedWeaponId;
+      player.rangedAmmo = 0;
       player.consumableSlot1 = "";
       player.consumableSlot2 = "";
     }
@@ -286,7 +289,9 @@ export class LootSystem {
         droppedId = oldId;
       }
       equip.rangedWeaponId = weapon.id;
+      equip.rangedAmmo = weapon.maxAmmo ?? 0;
       player.rangedWeaponId = weapon.id;
+      player.rangedAmmo = equip.rangedAmmo;
     }
 
     // Drop old weapon offset from player so it's not immediately overlapping
@@ -316,12 +321,14 @@ export class LootSystem {
     if (equip) {
       equip.meleeWeaponId = WeaponId.Fists;
       equip.rangedWeaponId = "";
+      equip.rangedAmmo = 0;
       equip.consumableSlot1 = "";
       equip.consumableSlot2 = "";
     }
     if (player) {
       player.meleeWeaponId = WeaponId.Fists;
       player.rangedWeaponId = "";
+      player.rangedAmmo = 0;
       player.consumableSlot1 = "";
       player.consumableSlot2 = "";
     }
@@ -378,7 +385,33 @@ export class LootSystem {
   getPlayerRangedConfig(sessionId: string): WeaponConfig | null {
     const equip = this.playerEquipment.get(sessionId);
     if (!equip || !equip.rangedWeaponId) return null;
+    // No ammo left → treat as unarmed
+    if (equip.rangedAmmo <= 0) return null;
     return getWeaponConfig(equip.rangedWeaponId) ?? null;
+  }
+
+  /** Get remaining ammo for ranged weapon */
+  getPlayerRangedAmmo(sessionId: string): number {
+    return this.playerEquipment.get(sessionId)?.rangedAmmo ?? 0;
+  }
+
+  /** Consume one round of ranged ammo. Returns false if empty. Removes weapon when depleted. */
+  consumeRangedAmmo(sessionId: string): boolean {
+    const equip = this.playerEquipment.get(sessionId);
+    const player = this.state.players.get(sessionId);
+    if (!equip || equip.rangedAmmo <= 0) return false;
+
+    equip.rangedAmmo--;
+    if (player) player.rangedAmmo = equip.rangedAmmo;
+
+    // Weapon depleted — unequip (don't drop a pickup)
+    if (equip.rangedAmmo <= 0) {
+      equip.rangedWeaponId = "";
+      if (player) player.rangedWeaponId = "";
+      this.room.broadcast("weapon_depleted", { sessionId });
+    }
+
+    return true;
   }
 
   /** Reset a single player's equipment to Fists (no drops) */
@@ -388,35 +421,52 @@ export class LootSystem {
     if (equip) {
       equip.meleeWeaponId = WeaponId.Fists;
       equip.rangedWeaponId = "";
+      equip.rangedAmmo = 0;
       equip.consumableSlot1 = "";
       equip.consumableSlot2 = "";
     }
     if (player) {
       player.meleeWeaponId = WeaponId.Fists;
       player.rangedWeaponId = "";
+      player.rangedAmmo = 0;
       player.consumableSlot1 = "";
       player.consumableSlot2 = "";
     }
   }
 
-  /** Spawn one pickup per lootable weapon and consumable in a grid near map center */
+  /** Spawn one pickup per lootable weapon and consumable in grouped rows near map center */
   spawnAllItems() {
     const centerX = 1024;
-    const centerY = 1024;
-    const spacing = 40;
+    const rowSpacing = 50;   // vertical spacing between items in a column
+    const colSpacing = 200;  // horizontal spacing between columns
 
-    // Weapons row (centered above map center)
-    const wCount = LOOTABLE_WEAPON_IDS.length;
-    const wStartX = centerX - ((wCount - 1) * spacing) / 2;
-    for (let i = 0; i < wCount; i++) {
-      this.spawnPickup(wStartX + i * spacing, centerY - 30, LOOTABLE_WEAPON_IDS[i], "");
+    const meleeIds = LOOTABLE_WEAPON_IDS.filter(id => getWeaponConfig(id)?.slot === "melee");
+    const rangedIds = LOOTABLE_WEAPON_IDS.filter(id => getWeaponConfig(id)?.slot === "ranged");
+
+    // Layout: 3 columns — Melee (left), Ranged (center), Consumables (right)
+    // Each column starts at a Y that vertically centers its group around centerY
+    const groupCenterY = 1024;
+
+    // Melee column (left)
+    const meleeX = centerX - colSpacing;
+    const meleeStartY = groupCenterY - ((meleeIds.length - 1) * rowSpacing) / 2;
+    for (let i = 0; i < meleeIds.length; i++) {
+      this.spawnPickup(meleeX, meleeStartY + i * rowSpacing, meleeIds[i], "");
     }
 
-    // Consumables row (centered below map center)
+    // Ranged column (center)
+    const rangedX = centerX;
+    const rangedStartY = groupCenterY - ((rangedIds.length - 1) * rowSpacing) / 2;
+    for (let i = 0; i < rangedIds.length; i++) {
+      this.spawnPickup(rangedX, rangedStartY + i * rowSpacing, rangedIds[i], "");
+    }
+
+    // Consumables column (right)
     const cCount = LOOTABLE_CONSUMABLE_IDS.length;
-    const cStartX = centerX - ((cCount - 1) * spacing) / 2;
+    const consumableX = centerX + colSpacing;
+    const consumableStartY = groupCenterY - ((cCount - 1) * rowSpacing) / 2;
     for (let i = 0; i < cCount; i++) {
-      this.spawnPickup(cStartX + i * spacing, centerY + 30, "", LOOTABLE_CONSUMABLE_IDS[i]);
+      this.spawnPickup(consumableX, consumableStartY + i * rowSpacing, "", LOOTABLE_CONSUMABLE_IDS[i]);
     }
   }
 

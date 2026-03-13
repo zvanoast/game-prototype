@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TILE_SIZE, PLAYER_RADIUS } from "shared";
+import { TILE_SIZE, PLAYER_RADIUS, ALL_VEHICLE_IDS, getVehicleConfig } from "shared";
 
 // All 9 selectable characters from the Kenney atlas (gun pose — facing right with weapon)
 export const CHARACTER_DEFS: { frame: string; name: string }[] = [
@@ -133,6 +133,7 @@ export class BootScene extends Phaser.Scene {
     this.generateLockerTextures();
     this.generatePickupTextures();
     this.generateConsumablePickupTextures();
+    this.generateVehicleTextures();
     this.generateDummyTexture();
     this.generateMiscTextures();
     this.registerAnimations();
@@ -233,11 +234,6 @@ export class BootScene extends Phaser.Scene {
 
   /** Tilesheet [col, row] → output pixel size for each projectile type */
   private static readonly PROJ_TILE_PICKS: { key: string; col: number; row: number; size: number }[] = [
-    { key: "proj_darts",           col: 24, row: 4,  size: 12 },
-    { key: "proj_plates",          col: 22, row: 8,  size: 16 },
-    { key: "proj_staple_gun",      col: 26, row: 5,  size: 6  },
-    { key: "proj_vase",            col: 20, row: 8,  size: 20 },
-    { key: "proj_rubber_band_gun", col: 25, row: 5,  size: 8  },
     { key: "proj_default",         col: 21, row: 5,  size: 8  },
   ];
 
@@ -299,38 +295,8 @@ export class BootScene extends Phaser.Scene {
   /** Procedural fallback when a tilesheet tile is empty */
   private generateProceduralProjectile(key: string, size: number) {
     const gfx = this.add.graphics();
-    switch (key) {
-      case "proj_darts":
-        gfx.fillStyle(0xff4444, 1);
-        gfx.fillRect(size / 2 - 1, 0, 2, size);
-        gfx.fillStyle(0xff6666, 1);
-        gfx.fillRect(0, 0, size, Math.max(2, size / 3));
-        break;
-      case "proj_plates":
-        gfx.fillStyle(0xeeeeff, 1);
-        gfx.fillCircle(size / 2, size / 2, size / 2);
-        gfx.lineStyle(1, 0xccccdd, 0.6);
-        gfx.strokeCircle(size / 2, size / 2, size / 3);
-        break;
-      case "proj_staple_gun":
-        gfx.fillStyle(0xff8800, 1);
-        gfx.fillRect(0, 0, size, size);
-        break;
-      case "proj_vase":
-        gfx.fillStyle(0x8844aa, 1);
-        gfx.fillCircle(size / 2, size / 2, size / 2);
-        gfx.lineStyle(1, 0xaa66cc, 0.5);
-        gfx.strokeCircle(size / 2, size / 2, size / 3);
-        break;
-      case "proj_rubber_band_gun":
-        gfx.fillStyle(0xffdd44, 1);
-        gfx.fillRect(0, size / 4, size, size / 2);
-        break;
-      default:
-        gfx.fillStyle(0xffff00, 1);
-        gfx.fillCircle(size / 2, size / 2, size / 2);
-        break;
-    }
+    gfx.fillStyle(0xffff00, 1);
+    gfx.fillCircle(size / 2, size / 2, size / 2);
     gfx.generateTexture(key, size, size);
     gfx.destroy();
   }
@@ -398,91 +364,142 @@ export class BootScene extends Phaser.Scene {
     pickupGfx.generateTexture("pickup", 16, 16);
     pickupGfx.destroy();
 
-    // Hammer silhouette
-    const hammerGfx = this.add.graphics();
-    hammerGfx.fillStyle(0xffffff, 1);
-    hammerGfx.fillRect(6, 3, 4, 10); // handle
-    hammerGfx.fillRect(2, 1, 12, 4);  // head
-    hammerGfx.generateTexture("pickup_hammer", 16, 16);
-    hammerGfx.destroy();
+    // Oboe silhouette
+    const oboeGfx = this.add.graphics();
+    oboeGfx.fillStyle(0xffffff, 1);
+    oboeGfx.fillRect(7, 1, 2, 13); // body tube
+    oboeGfx.fillRect(5, 13, 6, 2); // bell flare
+    oboeGfx.fillRect(7, 0, 2, 2);  // mouthpiece
+    oboeGfx.generateTexture("pickup_oboe", 16, 16);
+    oboeGfx.destroy();
 
-    // Lamp silhouette
-    const lampGfx = this.add.graphics();
-    lampGfx.fillStyle(0xffffff, 1);
-    lampGfx.fillRect(7, 4, 2, 9); // pole
-    lampGfx.fillTriangle(3, 2, 13, 2, 8, 6); // shade (triangle)
-    lampGfx.fillRect(5, 13, 6, 2); // base
-    lampGfx.generateTexture("pickup_lamp", 16, 16);
-    lampGfx.destroy();
-
-    // Frying pan silhouette
-    const panGfx = this.add.graphics();
-    panGfx.fillStyle(0xffffff, 1);
-    panGfx.fillCircle(8, 6, 5); // pan head
-    panGfx.fillRect(6, 10, 4, 5); // handle
-    panGfx.generateTexture("pickup_frying_pan", 16, 16);
-    panGfx.destroy();
-
-    // Darts silhouette
-    const dartsGfx = this.add.graphics();
-    dartsGfx.fillStyle(0xffffff, 1);
-    dartsGfx.fillRect(3, 7, 10, 2); // dart body
-    dartsGfx.fillTriangle(13, 5, 13, 11, 15, 8); // tip
-    dartsGfx.fillRect(1, 5, 3, 6); // flight
-    dartsGfx.generateTexture("pickup_darts", 16, 16);
-    dartsGfx.destroy();
-
-    // Plates silhouette (circle approximation of plate shape)
-    const platesGfx = this.add.graphics();
-    platesGfx.fillStyle(0xffffff, 1);
-    platesGfx.fillCircle(8, 8, 6);
-    platesGfx.lineStyle(1, 0xcccccc, 0.6);
-    platesGfx.strokeCircle(8, 8, 3);
-    platesGfx.generateTexture("pickup_plates", 16, 16);
-    platesGfx.destroy();
-
-    // Staple gun silhouette
-    const stapleGfx = this.add.graphics();
-    stapleGfx.fillStyle(0xffffff, 1);
-    stapleGfx.fillRect(3, 4, 10, 5); // body
-    stapleGfx.fillRect(4, 8, 4, 5);  // grip
-    stapleGfx.fillRect(12, 5, 2, 3); // muzzle
-    stapleGfx.generateTexture("pickup_staple_gun", 16, 16);
-    stapleGfx.destroy();
-
-    // Baseball bat silhouette
+    // Signed Baseball Bat silhouette
     const batGfx = this.add.graphics();
     batGfx.fillStyle(0xffffff, 1);
     batGfx.fillRect(7, 2, 3, 12); // handle
     batGfx.fillRect(5, 0, 7, 4);  // barrel
-    batGfx.generateTexture("pickup_baseball_bat", 16, 16);
+    batGfx.lineStyle(1, 0xcccccc, 0.5);
+    batGfx.lineBetween(6, 3, 10, 1); // signature mark
+    batGfx.generateTexture("pickup_signed_baseball_bat", 16, 16);
     batGfx.destroy();
 
-    // Golf club silhouette
-    const golfGfx = this.add.graphics();
-    golfGfx.fillStyle(0xffffff, 1);
-    golfGfx.fillRect(7, 1, 2, 12); // shaft
-    golfGfx.fillRect(4, 12, 8, 3); // head
-    golfGfx.generateTexture("pickup_golf_club", 16, 16);
-    golfGfx.destroy();
+    // Ceremonial Sword silhouette
+    const swordGfx = this.add.graphics();
+    swordGfx.fillStyle(0xffffff, 1);
+    swordGfx.fillRect(7, 0, 2, 10);  // blade
+    swordGfx.fillRect(4, 10, 8, 2);  // crossguard
+    swordGfx.fillRect(7, 11, 2, 4);  // grip
+    swordGfx.generateTexture("pickup_ceremonial_sword", 16, 16);
+    swordGfx.destroy();
 
-    // Vase silhouette
-    const vaseGfx = this.add.graphics();
-    vaseGfx.fillStyle(0xffffff, 1);
-    vaseGfx.fillCircle(8, 7, 5);   // body
-    vaseGfx.fillRect(6, 1, 4, 3);  // neck
-    vaseGfx.fillRect(5, 12, 6, 2); // base
-    vaseGfx.generateTexture("pickup_vase", 16, 16);
-    vaseGfx.destroy();
+    // Skis silhouette
+    const skisGfx = this.add.graphics();
+    skisGfx.fillStyle(0xffffff, 1);
+    skisGfx.fillRect(4, 1, 2, 14);  // left ski
+    skisGfx.fillRect(10, 1, 2, 14); // right ski
+    skisGfx.fillRect(3, 14, 4, 1);  // left tip
+    skisGfx.fillRect(9, 14, 4, 1);  // right tip
+    skisGfx.generateTexture("pickup_skis", 16, 16);
+    skisGfx.destroy();
 
-    // Rubber band gun silhouette
-    const rbgGfx = this.add.graphics();
-    rbgGfx.fillStyle(0xffffff, 1);
-    rbgGfx.fillRect(2, 5, 12, 3);  // barrel
-    rbgGfx.fillRect(4, 7, 4, 6);   // grip
-    rbgGfx.fillTriangle(13, 4, 14, 8, 11, 8); // front sight
-    rbgGfx.generateTexture("pickup_rubber_band_gun", 16, 16);
-    rbgGfx.destroy();
+    // Kayak silhouette
+    const kayakGfx = this.add.graphics();
+    kayakGfx.fillStyle(0xffffff, 1);
+    kayakGfx.fillTriangle(8, 0, 3, 8, 13, 8);  // bow
+    kayakGfx.fillRect(3, 8, 10, 4);              // hull
+    kayakGfx.fillTriangle(3, 12, 13, 12, 8, 16); // stern
+    kayakGfx.generateTexture("pickup_kayak", 16, 16);
+    kayakGfx.destroy();
+
+    // Rusty Power Drill silhouette
+    const drillGfx = this.add.graphics();
+    drillGfx.fillStyle(0xffffff, 1);
+    drillGfx.fillRect(3, 4, 8, 5);  // body
+    drillGfx.fillRect(4, 8, 4, 5);  // grip
+    drillGfx.fillRect(11, 5, 4, 3); // drill bit
+    drillGfx.generateTexture("pickup_rusty_power_drill", 16, 16);
+    drillGfx.destroy();
+
+    // Indian Rug silhouette
+    const rugGfx = this.add.graphics();
+    rugGfx.fillStyle(0xffffff, 1);
+    rugGfx.fillRect(2, 3, 12, 10); // rug body
+    rugGfx.lineStyle(1, 0xcccccc, 0.5);
+    rugGfx.lineBetween(4, 5, 12, 5);  // pattern line 1
+    rugGfx.lineBetween(4, 8, 12, 8);  // pattern line 2
+    rugGfx.lineBetween(4, 11, 12, 11); // pattern line 3
+    rugGfx.generateTexture("pickup_indian_rug", 16, 16);
+    rugGfx.destroy();
+
+    // --- Ranged / Throwable weapon pickups ---
+
+    // Records silhouette (vinyl disc)
+    const recordsGfx = this.add.graphics();
+    recordsGfx.fillStyle(0xffffff, 1);
+    recordsGfx.fillCircle(8, 8, 6);
+    recordsGfx.fillStyle(0x000000, 1);
+    recordsGfx.fillCircle(8, 8, 2); // center hole
+    recordsGfx.generateTexture("pickup_records", 16, 16);
+    recordsGfx.destroy();
+
+    // Box of Antiques silhouette
+    const boxGfx = this.add.graphics();
+    boxGfx.fillStyle(0xffffff, 1);
+    boxGfx.fillRect(2, 4, 12, 9); // box
+    boxGfx.lineStyle(1, 0xcccccc, 0.5);
+    boxGfx.lineBetween(2, 4, 14, 4); // lid line
+    boxGfx.fillRect(6, 2, 4, 3); // handle flap
+    boxGfx.generateTexture("pickup_box_of_antiques", 16, 16);
+    boxGfx.destroy();
+
+    // Knife Set silhouette
+    const knifeGfx = this.add.graphics();
+    knifeGfx.fillStyle(0xffffff, 1);
+    knifeGfx.fillRect(3, 2, 2, 10); // blade 1
+    knifeGfx.fillRect(7, 3, 2, 9);  // blade 2
+    knifeGfx.fillRect(11, 4, 2, 8); // blade 3
+    knifeGfx.fillRect(2, 12, 12, 2); // block
+    knifeGfx.generateTexture("pickup_knife_set", 16, 16);
+    knifeGfx.destroy();
+
+    // Rare Coins silhouette
+    const coinsGfx = this.add.graphics();
+    coinsGfx.fillStyle(0xffffff, 1);
+    coinsGfx.fillCircle(6, 6, 4);   // coin 1
+    coinsGfx.fillCircle(10, 9, 4);  // coin 2
+    coinsGfx.fillCircle(5, 11, 3);  // coin 3
+    coinsGfx.generateTexture("pickup_rare_coins", 16, 16);
+    coinsGfx.destroy();
+
+    // Paint Cans silhouette
+    const paintGfx = this.add.graphics();
+    paintGfx.fillStyle(0xffffff, 1);
+    paintGfx.fillRect(3, 4, 10, 10); // can body
+    paintGfx.fillRect(4, 2, 8, 3);   // lid
+    paintGfx.fillRect(6, 1, 4, 2);   // handle
+    paintGfx.generateTexture("pickup_paint_cans", 16, 16);
+    paintGfx.destroy();
+
+    // Microwave silhouette
+    const microGfx = this.add.graphics();
+    microGfx.fillStyle(0xffffff, 1);
+    microGfx.fillRect(1, 3, 14, 10); // body
+    microGfx.fillStyle(0x000000, 1);
+    microGfx.fillRect(3, 5, 8, 6);   // window
+    microGfx.fillStyle(0xffffff, 1);
+    microGfx.fillRect(12, 5, 2, 2);  // button
+    microGfx.fillRect(12, 9, 2, 2);  // button
+    microGfx.generateTexture("pickup_microwave", 16, 16);
+    microGfx.destroy();
+
+    // BB Gun silhouette
+    const bbGfx = this.add.graphics();
+    bbGfx.fillStyle(0xffffff, 1);
+    bbGfx.fillRect(2, 6, 12, 3);  // barrel
+    bbGfx.fillRect(4, 8, 4, 5);   // stock/grip
+    bbGfx.fillRect(13, 5, 2, 4);  // muzzle
+    bbGfx.generateTexture("pickup_bb_gun", 16, 16);
+    bbGfx.destroy();
   }
 
   // ─── Consumable pickup textures ─────────────────────────────────────
@@ -520,6 +537,75 @@ export class BootScene extends Phaser.Scene {
     dmgGfx.fillTriangle(8, 15, 2, 5, 11, 11);
     dmgGfx.generateTexture("pickup_damage_boost", 16, 16);
     dmgGfx.destroy();
+  }
+
+  // ─── Vehicle textures (per-vehicle placeholder shapes) ──────────────
+
+  private generateVehicleTextures() {
+    const size = 40; // vehicle sprite size
+
+    for (const vehicleId of ALL_VEHICLE_IDS) {
+      const config = getVehicleConfig(vehicleId);
+      if (!config) continue;
+
+      const key = `vehicle_${vehicleId}`;
+      const gfx = this.add.graphics();
+      gfx.fillStyle(config.color, 1);
+
+      // Draw distinct shapes per vehicle
+      switch (vehicleId) {
+        case "office_chair":
+          // Circle with smaller circles for wheels
+          gfx.fillCircle(size / 2, size / 2, size / 3);
+          gfx.fillStyle(0x333333, 1);
+          gfx.fillCircle(size / 4, size - 6, 3);
+          gfx.fillCircle(size * 3 / 4, size - 6, 3);
+          gfx.fillCircle(size / 4, 6, 3);
+          gfx.fillCircle(size * 3 / 4, 6, 3);
+          break;
+        case "red_wagon":
+          // Rectangle with wheels
+          gfx.fillRect(4, 10, size - 8, size - 20);
+          gfx.fillStyle(0x333333, 1);
+          gfx.fillCircle(10, size - 6, 4);
+          gfx.fillCircle(size - 10, size - 6, 4);
+          // Handle
+          gfx.lineStyle(2, 0x666666, 1);
+          gfx.lineBetween(size / 2, 10, size / 2, 2);
+          break;
+        case "golf_cart":
+          // Larger rectangle with canopy
+          gfx.fillRect(4, 6, size - 8, size - 12);
+          gfx.fillStyle(0xffffff, 0.4);
+          gfx.fillRect(6, 8, size - 12, 10); // windshield
+          gfx.fillStyle(0x333333, 1);
+          gfx.fillCircle(10, size - 4, 4);
+          gfx.fillCircle(size - 10, size - 4, 4);
+          break;
+        case "jet_ski":
+          // Pointed front, wider back
+          gfx.fillTriangle(size / 2, 2, 6, size - 4, size - 6, size - 4);
+          gfx.fillStyle(0xffffff, 0.3);
+          gfx.fillRect(size / 2 - 4, 12, 8, 4); // handlebars
+          break;
+        case "fork_lift":
+          // Boxy with forks
+          gfx.fillRect(6, 6, size - 12, size - 12);
+          gfx.fillStyle(0x888888, 1);
+          gfx.fillRect(2, 2, 4, size / 2); // left fork
+          gfx.fillRect(size - 6, 2, 4, size / 2); // right fork
+          gfx.fillStyle(0x333333, 1);
+          gfx.fillCircle(10, size - 4, 4);
+          gfx.fillCircle(size - 10, size - 4, 4);
+          break;
+        default:
+          gfx.fillCircle(size / 2, size / 2, size / 3);
+          break;
+      }
+
+      gfx.generateTexture(key, size, size);
+      gfx.destroy();
+    }
   }
 
   // ─── Dummy sprite (target mannequin) ────────────────────────────────

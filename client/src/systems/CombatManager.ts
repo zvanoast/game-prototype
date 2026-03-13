@@ -185,24 +185,11 @@ export class CombatManager {
     rotationSpeed?: number;
     scalePulse?: { min: number; max: number; duration: number };
     alphaPulse?: { min: number; max: number; duration: number };
-  }> = {
-    darts:           { rotationSpeed: 0 },
-    plates:          { rotationSpeed: 720, scalePulse: { min: 0.9, max: 1.1, duration: 150 } },
-    staple_gun:      { rotationSpeed: 0 },
-    vase:            { rotationSpeed: 180, scalePulse: { min: 0.95, max: 1.05, duration: 300 } },
-    rubber_band_gun: { rotationSpeed: 0, scalePulse: { min: 0.8, max: 1.2, duration: 100 } },
-  };
+  }> = {};
 
   /** Get weapon-specific projectile texture key */
-  private getProjectileTextureKey(weaponId: string): string {
-    switch (weaponId) {
-      case "darts": return "proj_darts";
-      case "plates": return "proj_plates";
-      case "staple_gun": return "proj_staple_gun";
-      case "vase": return "proj_vase";
-      case "rubber_band_gun": return "proj_rubber_band_gun";
-      default: return "proj_default";
-    }
+  private getProjectileTextureKey(_weaponId: string): string {
+    return "proj_default";
   }
 
   /** Apply tween animations to a projectile sprite */

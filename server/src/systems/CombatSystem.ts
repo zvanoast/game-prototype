@@ -123,14 +123,17 @@ export class CombatSystem {
       (meleeConfig.meleeCooldownMs ?? 400) / (1000 / TICK_RATE)
     ));
 
-    // Fire on release
+    // Fire on release (consumes ammo)
     if (attackReleased && rangedConfig && (tick - combat.lastShootTick >= shootCooldownTicks)) {
-      this.fireProjectile(sessionId, player, rangedConfig);
-      combat.lastShootTick = tick;
+      if (this.lootSystem.consumeRangedAmmo(sessionId)) {
+        this.fireProjectile(sessionId, player, rangedConfig);
+        combat.lastShootTick = tick;
+      }
     }
 
-    // Melee pressed — enhanced if dashing (dash strike)
-    if (meleePressed && (tick - combat.lastMeleeTick >= meleeCooldownTicks)) {
+    // Melee: press to attack, or hold for continuous-attack weapons
+    const meleeTriggered = meleeConfig.meleeHoldToAttack ? meleeDown : meleePressed;
+    if (meleeTriggered && (tick - combat.lastMeleeTick >= meleeCooldownTicks)) {
       const isDashing = player.state === "dashing";
       const rangeMult = isDashing ? DASH_STRIKE_RANGE_MULT : 1;
       const damageMult = isDashing ? DASH_STRIKE_DAMAGE_MULT : 1;
@@ -306,12 +309,12 @@ export class CombatSystem {
     }
   }
 
-  private applyDamage(
+  applyDamage(
     targetId: string,
     target: PlayerSchema,
     damage: number,
     attackerId: string,
-    type: "projectile" | "melee"
+    type: "projectile" | "melee" | "vehicle"
   ) {
     // Route through shield first
     let actualDamage = damage;

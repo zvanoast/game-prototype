@@ -7,3 +7,4 @@ export * from "./movement.js";
 export * from "./weapons.js";
 export * from "./consumables.js";
 export * from "./locker-data.js";
+export * from "./vehicles.js";

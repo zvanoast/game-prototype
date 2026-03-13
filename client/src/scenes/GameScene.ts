@@ -35,6 +35,8 @@ import {
   buildWallRects,
   getWeaponConfig,
   getConsumableConfig,
+  getVehicleConfig,
+  VEHICLE_INTERACT_RANGE,
   WeaponId,
 } from "shared";
 import { Button } from "shared";
@@ -106,6 +108,7 @@ export class GameScene extends Phaser.Scene {
   // Equipment tracking
   private localMeleeWeaponId = WeaponId.Fists as string;
   private localRangedWeaponId = "";
+  private localRangedAmmo = 0;
   private localConsumableSlot1 = "";
   private localConsumableSlot2 = "";
 
@@ -160,9 +163,15 @@ export class GameScene extends Phaser.Scene {
   private pickupTooltip!: Phaser.GameObjects.Container;
   private pickupTooltipText!: Phaser.GameObjects.Text;
   private hoveredPickupId: number | null = null;
+  private pickupClickedThisFrame = false;
 
   // Interaction prompt
   private interactPrompt!: Phaser.GameObjects.Text;
+
+  // Vehicles
+  private vehicleContainers = new Map<number, Phaser.GameObjects.Container>();
+  private vehicleDurabilityBars = new Map<number, Phaser.GameObjects.Graphics>();
+  private localMountedVehicleId = 0; // 0 = on foot
 
   // Dummies
   private dummies: TestDummy[] = [];
@@ -195,6 +204,7 @@ export class GameScene extends Phaser.Scene {
     this.localKills = 0;
     this.localMeleeWeaponId = WeaponId.Fists as string;
     this.localRangedWeaponId = "";
+    this.localRangedAmmo = 0;
     this.localConsumableSlot1 = "";
     this.localConsumableSlot2 = "";
     this.matchPhase = "waiting";
@@ -220,6 +230,9 @@ export class GameScene extends Phaser.Scene {
     this.lockerSprites.clear();
     this.pickupSprites.clear();
     this.pickupWeaponIds.clear();
+    this.vehicleContainers.clear();
+    this.vehicleDurabilityBars.clear();
+    this.localMountedVehicleId = 0;
     this.hoveredPickupId = null;
     this.dummies = [];
 
@@ -542,8 +555,10 @@ export class GameScene extends Phaser.Scene {
           this.localEliminated = player.eliminated ?? false;
           this.localMeleeWeaponId = player.meleeWeaponId ?? WeaponId.Fists;
           this.localRangedWeaponId = player.rangedWeaponId ?? "";
+          this.localRangedAmmo = player.rangedAmmo ?? 0;
           this.localConsumableSlot1 = player.consumableSlot1 ?? "";
           this.localConsumableSlot2 = player.consumableSlot2 ?? "";
+          this.localMountedVehicleId = player.mountedVehicleSchemaId ?? 0;
           this.combatManager.setMeleeWeapon(this.localMeleeWeaponId);
           this.combatManager.setRangedWeapon(this.localRangedWeaponId);
 
@@ -606,10 +621,14 @@ export class GameScene extends Phaser.Scene {
               this.localRangedWeaponId = newRanged;
               this.combatManager.setRangedWeapon(newRanged);
             }
+            this.localRangedAmmo = player.rangedAmmo ?? 0;
 
             // Track consumable changes
             this.localConsumableSlot1 = player.consumableSlot1 ?? "";
             this.localConsumableSlot2 = player.consumableSlot2 ?? "";
+
+            // Track mounted vehicle
+            this.localMountedVehicleId = player.mountedVehicleSchemaId ?? 0;
 
             // Handle local player death state from server
             if (player.state === "dead" && this.localPlayer) {
@@ -717,6 +736,7 @@ export class GameScene extends Phaser.Scene {
           const dist = Math.sqrt(dx * dx + dy * dy);
           if (dist <= PICKUP_INTERACT_RANGE) {
             room.send("pickup_click", { pickupId });
+            this.pickupClickedThisFrame = true;
           }
         });
 
@@ -752,6 +772,84 @@ export class GameScene extends Phaser.Scene {
         if (this.hoveredPickupId === pickup.id) {
           this.hoveredPickupId = null;
           this.pickupTooltip.setVisible(false);
+        }
+      });
+
+      // --- Vehicles ---
+      room.state.vehicles.onAdd((vehicle: any, _key: number) => {
+        const config = getVehicleConfig(vehicle.vehicleId);
+        const texKey = this.textures.exists(`vehicle_${vehicle.vehicleId}`)
+          ? `vehicle_${vehicle.vehicleId}`
+          : "pickup";
+        const sprite = this.add.sprite(0, 0, texKey);
+        sprite.setOrigin(0.5, 0.5);
+
+        // Name label below sprite
+        const label = this.add.text(0, 24, config?.name ?? vehicle.vehicleId, {
+          fontSize: "10px",
+          fontFamily: "monospace",
+          color: "#ffffff",
+          backgroundColor: "#00000088",
+          padding: { x: 2, y: 1 },
+        });
+        label.setOrigin(0.5, 0);
+
+        const container = this.add.container(vehicle.x, vehicle.y, [sprite, label]);
+        container.setDepth(4);
+        this.vehicleContainers.set(vehicle.id, container);
+
+        // Durability bar graphics
+        const durBar = this.add.graphics();
+        durBar.setDepth(15);
+        this.vehicleDurabilityBars.set(vehicle.id, durBar);
+
+        vehicle.onChange(() => {
+          const c = this.vehicleContainers.get(vehicle.id);
+          if (!c) return;
+          c.setPosition(vehicle.x, vehicle.y);
+
+          // Rotate only the sprite, not the label
+          sprite.setRotation(vehicle.angle);
+
+          // Hide if destroyed
+          if (vehicle.destroyed) {
+            c.setAlpha(0.2);
+          } else if (vehicle.riderId) {
+            c.setAlpha(0.7);
+          } else {
+            c.setAlpha(1);
+          }
+
+          // Update durability bar
+          const bar = this.vehicleDurabilityBars.get(vehicle.id);
+          if (bar) {
+            bar.clear();
+            if (vehicle.riderId && !vehicle.destroyed) {
+              const barW = 32;
+              const barH = 3;
+              const barX = vehicle.x - barW / 2;
+              const barY = vehicle.y + 22;
+              bar.fillStyle(0x000000, 0.6);
+              bar.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+              const pct = Math.max(0, vehicle.durabilityPct);
+              const color = pct > 0.5 ? 0x44ff44 : pct > 0.25 ? 0xffff00 : 0xff4444;
+              bar.fillStyle(color, 0.9);
+              bar.fillRect(barX, barY, barW * pct, barH);
+            }
+          }
+        });
+      });
+
+      room.state.vehicles.onRemove((vehicle: any, _key: number) => {
+        const container = this.vehicleContainers.get(vehicle.id);
+        if (container) {
+          container.destroy();
+          this.vehicleContainers.delete(vehicle.id);
+        }
+        const bar = this.vehicleDurabilityBars.get(vehicle.id);
+        if (bar) {
+          bar.destroy();
+          this.vehicleDurabilityBars.delete(vehicle.id);
         }
       });
 
@@ -888,6 +986,7 @@ export class GameScene extends Phaser.Scene {
           this.pendingInputs = [];
           this.localHealth = MAX_HEALTH;
           this.localEliminated = false;
+          this.localMountedVehicleId = 0;
 
           // Exit spectator mode on respawn (match reset)
           this.exitSpectatorMode();
@@ -951,6 +1050,47 @@ export class GameScene extends Phaser.Scene {
         this.events.emit("sfx:buff_expired");
       });
 
+      // Vehicle messages
+      room.onMessage("vehicle_mount", (data: any) => {
+        if (data.sessionId === room.sessionId) {
+          this.localMountedVehicleId = data.vehicleSchemaId;
+        }
+        this.events.emit("sfx:vehicle_mount");
+      });
+
+      room.onMessage("vehicle_dismount", (data: any) => {
+        if (data.sessionId === room.sessionId) {
+          this.localMountedVehicleId = 0;
+        }
+        this.events.emit("sfx:vehicle_dismount");
+      });
+
+      room.onMessage("vehicle_destroyed", (_data: any) => {
+        this.events.emit("sfx:vehicle_destroyed");
+      });
+
+      room.onMessage("vehicle_hit", (data: any) => {
+        // Find target position for damage number
+        let tx = 0, ty = 0;
+        if (data.targetId === room.sessionId && this.localPlayer) {
+          tx = this.localPlayer.x;
+          ty = this.localPlayer.y;
+          this.screenShake.shake(SHAKE_DAMAGE_MAG, SHAKE_DAMAGE_DURATION);
+        } else {
+          const remote = this.remotePlayers.get(data.targetId);
+          if (remote) { tx = remote.x; ty = remote.y; }
+        }
+        if (tx || ty) {
+          this.events.emit("damage:number", tx, ty, data.damage);
+          this.particles.impact(tx, ty, 0xffffff);
+        }
+        this.events.emit("sfx:vehicle_hit");
+      });
+
+      room.onMessage("weapon_depleted", (_data: any) => {
+        // Ranged weapon ammo depleted — UI will update via state sync
+      });
+
       room.onLeave((code: number) => {
         console.log(`Disconnected from room (code: ${code})`);
       });
@@ -990,11 +1130,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Button state: track attack (left mouse) and melee (right mouse)
-    const leftDown = pointer.leftButtonDown();
+    // Suppress attack if a pickup was clicked this frame to avoid firing the newly equipped weapon
+    const leftDown = pointer.leftButtonDown() && !this.pickupClickedThisFrame;
     const rightDown = pointer.rightButtonDown();
+    this.pickupClickedThisFrame = false;
     let buttons = 0;
     if (leftDown) buttons |= Button.ATTACK;
-    if (rightDown) buttons |= Button.MELEE;
     if (this.keys.E.isDown) buttons |= Button.INTERACT;
     if (this.keys.Q.isDown) buttons |= Button.USE_CONSUMABLE;
     if (this.keys.SPACE.isDown) buttons |= Button.DASH;
@@ -1058,6 +1199,11 @@ export class GameScene extends Phaser.Scene {
 
       // Combat aim
       this.combatManager.setAimAngle(aimAngle);
+
+      // Hold-to-attack melee: continuously swing while right mouse held
+      if (rightDown && this.combatManager.getMeleeConfig().meleeHoldToAttack) {
+        this.combatManager.tryMelee();
+      }
 
       // Fire prediction on release (matches server fire-on-release behavior)
       // In multiplayer, only emit muzzle flash/sound — actual projectile visuals
@@ -1220,7 +1366,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Update weapon HUD
-    this.weaponHud.update(this.localMeleeWeaponId, this.localRangedWeaponId, this.localConsumableSlot1, this.localConsumableSlot2, this.localHealth, this.localShieldHp);
+    this.weaponHud.update(this.localMeleeWeaponId, this.localRangedWeaponId, this.localConsumableSlot1, this.localConsumableSlot2, this.localHealth, this.localShieldHp, this.localRangedAmmo);
 
     // Update match HUD
     this.matchHud.update(
@@ -1270,15 +1416,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Get per-weapon projectile texture key */
-  private getProjectileTexture(weaponId: string): string {
-    switch (weaponId) {
-      case "darts": return "proj_darts";
-      case "plates": return "proj_plates";
-      case "staple_gun": return "proj_staple_gun";
-      case "vase": return "proj_vase";
-      case "rubber_band_gun": return "proj_rubber_band_gun";
-      default: return "proj_default";
-    }
+  private getProjectileTexture(_weaponId: string): string {
+    return "proj_default";
   }
 
   // ─── Projectile animation configs ────────────────────────────────────
@@ -1287,13 +1426,7 @@ export class GameScene extends Phaser.Scene {
     rotationSpeed?: number; // deg/s (0 = face travel direction)
     scalePulse?: { min: number; max: number; duration: number };
     alphaPulse?: { min: number; max: number; duration: number };
-  }> = {
-    darts:           { rotationSpeed: 0 },
-    plates:          { rotationSpeed: 720, scalePulse: { min: 0.9, max: 1.1, duration: 150 } },
-    staple_gun:      { rotationSpeed: 0 },
-    vase:            { rotationSpeed: 180, scalePulse: { min: 0.95, max: 1.05, duration: 300 } },
-    rubber_band_gun: { rotationSpeed: 0, scalePulse: { min: 0.8, max: 1.2, duration: 100 } },
-  };
+  }> = {};
 
   /** Apply per-weapon tween animations to a projectile sprite. Returns tweens for cleanup. */
   private applyProjectileAnimation(sprite: Phaser.GameObjects.Sprite, weaponId: string): Phaser.Tweens.Tween[] {
@@ -1411,37 +1544,77 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const state = room.state as any;
-    if (!state?.lockers) {
-      this.interactPrompt.setVisible(false);
+    // If mounted, show dismount prompt above player
+    if (this.localMountedVehicleId > 0) {
+      this.interactPrompt.setText("Press E to dismount");
+      this.interactPrompt.setPosition(this.localPlayer.x, this.localPlayer.y - PLAYER_RADIUS - 20);
+      this.interactPrompt.setVisible(true);
       return;
     }
 
-    let nearestDist = Infinity;
-    let nearestX = 0;
-    let nearestY = 0;
+    const state = room.state as any;
 
-    for (let i = 0; i < state.lockers.length; i++) {
-      const locker = state.lockers.at(i);
-      if (!locker || locker.opened) continue;
+    // Check for nearby vehicle first
+    if (state?.vehicles) {
+      let nearestVDist = Infinity;
+      let nearestVX = 0;
+      let nearestVY = 0;
+      let nearestVName = "";
 
-      const dx = this.localPlayer.x - locker.x;
-      const dy = this.localPlayer.y - locker.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      for (let i = 0; i < state.vehicles.length; i++) {
+        const v = state.vehicles.at(i);
+        if (!v || v.destroyed || v.riderId) continue;
 
-      if (dist <= LOCKER_INTERACT_RANGE && dist < nearestDist) {
-        nearestDist = dist;
-        nearestX = locker.x;
-        nearestY = locker.y;
+        const dx = this.localPlayer.x - v.x;
+        const dy = this.localPlayer.y - v.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist <= VEHICLE_INTERACT_RANGE && dist < nearestVDist) {
+          nearestVDist = dist;
+          nearestVX = v.x;
+          nearestVY = v.y;
+          const cfg = getVehicleConfig(v.vehicleId);
+          nearestVName = cfg?.name ?? v.vehicleId;
+        }
+      }
+
+      if (nearestVDist <= VEHICLE_INTERACT_RANGE) {
+        this.interactPrompt.setText(`Press E: ${nearestVName}`);
+        this.interactPrompt.setPosition(nearestVX, nearestVY - 24);
+        this.interactPrompt.setVisible(true);
+        return;
       }
     }
 
-    if (nearestDist <= LOCKER_INTERACT_RANGE) {
-      this.interactPrompt.setPosition(nearestX, nearestY - 24);
-      this.interactPrompt.setVisible(true);
-    } else {
-      this.interactPrompt.setVisible(false);
+    // Check for nearby lockers
+    if (state?.lockers) {
+      let nearestDist = Infinity;
+      let nearestX = 0;
+      let nearestY = 0;
+
+      for (let i = 0; i < state.lockers.length; i++) {
+        const locker = state.lockers.at(i);
+        if (!locker || locker.opened) continue;
+
+        const dx = this.localPlayer.x - locker.x;
+        const dy = this.localPlayer.y - locker.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist <= LOCKER_INTERACT_RANGE && dist < nearestDist) {
+          nearestDist = dist;
+          nearestX = locker.x;
+          nearestY = locker.y;
+        }
+      }
+
+      if (nearestDist <= LOCKER_INTERACT_RANGE) {
+        this.interactPrompt.setText("Press E");
+        this.interactPrompt.setPosition(nearestX, nearestY - 24);
+        this.interactPrompt.setVisible(true);
+        return;
+      }
     }
+
+    this.interactPrompt.setVisible(false);
   }
 
   private updatePickupTooltip() {

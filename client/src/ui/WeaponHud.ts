@@ -19,6 +19,7 @@ export class WeaponHud {
   private healthLabel: Phaser.GameObjects.Text;
   private lastMeleeId = "";
   private lastRangedId = "";
+  private lastRangedAmmo = -1;
   private lastConsumable1 = "";
   private lastConsumable2 = "";
 
@@ -76,7 +77,8 @@ export class WeaponHud {
     consumable1 = "",
     consumable2 = "",
     health = MAX_HEALTH,
-    shieldHp = 0
+    shieldHp = 0,
+    rangedAmmo = 0
   ) {
     const cam = this.scene.cameras.main;
     const centerX = cam.width / 2;
@@ -98,8 +100,9 @@ export class WeaponHud {
       }
     }
 
-    if (rangedWeaponId !== this.lastRangedId) {
+    if (rangedWeaponId !== this.lastRangedId || rangedAmmo !== this.lastRangedAmmo) {
       this.lastRangedId = rangedWeaponId;
+      this.lastRangedAmmo = rangedAmmo;
       if (!rangedWeaponId) {
         this.rangedText.setText("[LMB] --");
       } else {
@@ -107,8 +110,7 @@ export class WeaponHud {
         const name = config?.name ?? rangedWeaponId;
         if (config) {
           const dmg = config.damage ?? 0;
-          const rate = config.fireRateMs ?? 0;
-          this.rangedText.setText(`[LMB] ${name}\n ${dmg}dmg ${rate}ms`);
+          this.rangedText.setText(`[LMB] ${name}\n ${dmg}dmg  x${rangedAmmo}`);
         } else {
           this.rangedText.setText(`[LMB] ${name}`);
         }

@@ -4,6 +4,7 @@ import { CombatSystem } from "../systems/CombatSystem";
 import { LootSystem } from "../systems/LootSystem";
 import { BuffSystem } from "../systems/BuffSystem";
 import { MatchSystem } from "../systems/MatchSystem";
+import { VehicleSystem } from "../systems/VehicleSystem";
 import {
   TICK_RATE,
   TICK_INTERVAL_MS,
@@ -34,6 +35,7 @@ export class GameRoom extends Room<GameStateSchema> {
   private lootSystem!: LootSystem;
   private buffSystem!: BuffSystem;
   private matchSystem!: MatchSystem;
+  private vehicleSystem!: VehicleSystem;
 
   // Track previous buttons per player for edge detection
   private prevButtons = new Map<string, number>();
@@ -83,17 +85,26 @@ export class GameRoom extends Room<GameStateSchema> {
       this.lootSystem
     );
 
+    // Create vehicle system
+    this.vehicleSystem = new VehicleSystem(this, this.state);
+
     // Cross-wire systems
     this.combatSystem.setMatchSystem(this.matchSystem);
     this.combatSystem.setBuffSystem(this.buffSystem);
     this.matchSystem.setCombatSystem(this.combatSystem);
     this.matchSystem.setBuffSystem(this.buffSystem);
+    this.matchSystem.setVehicleSystem(this.vehicleSystem);
+    this.vehicleSystem.setCombatSystem(this.combatSystem);
 
-    // Sandbox mode: skip match lifecycle, spawn all items
+    // Sandbox mode: skip match lifecycle, spawn all items + vehicles in neat layout
     if (options?.sandbox) {
       this.matchSystem.enableSandbox();
       this.lootSystem.spawnAllItems();
+      this.vehicleSystem.spawnAllVehicles();
       console.log("Sandbox mode enabled");
+    } else {
+      // Normal match: random vehicle spawns
+      this.vehicleSystem.initVehicles();
     }
 
     // Listen for input messages
@@ -173,6 +184,7 @@ export class GameRoom extends Room<GameStateSchema> {
       this.takenCharacters.delete(player.characterIndex);
     }
 
+    this.vehicleSystem.unregisterPlayer(client.sessionId);
     this.lootSystem.unregisterPlayer(client.sessionId);
     this.combatSystem.unregisterPlayer(client.sessionId);
     this.buffSystem.unregisterPlayer(client.sessionId);
@@ -271,6 +283,20 @@ export class GameRoom extends Room<GameStateSchema> {
             this.dashStates.delete(sessionId);
             player.state = "idle";
           }
+        } else if (this.vehicleSystem.isPlayerMounted(sessionId)) {
+          // Mounted movement — vehicle speed, no acceleration model, just direct velocity
+          const vSpeed = this.vehicleSystem.getMountedSpeed(sessionId);
+          const mag = Math.sqrt(dx * dx + dy * dy);
+          const ndx = mag > 0.1 ? dx / mag : 0;
+          const ndy = mag > 0.1 ? dy / mag : 0;
+          const newX = player.x + ndx * vSpeed * dt;
+          const newY = player.y + ndy * vSpeed * dt;
+          const resolved = resolveWallCollisions(newX, newY, PLAYER_RADIUS, this.wallRects);
+          player.x = resolved.x;
+          player.y = resolved.y;
+          player.vx = 0;
+          player.vy = 0;
+          player.state = mag > 0.1 ? "moving" : "idle";
         } else {
           // Normal acceleration-based movement (with speed buff)
           const speedMult = this.buffSystem.getSpeedMultiplier(sessionId);
@@ -317,7 +343,12 @@ export class GameRoom extends Room<GameStateSchema> {
         const prev = this.prevButtons.get(sessionId) ?? 0;
         const interactPressed = !!(input.buttons & Button.INTERACT) && !(prev & Button.INTERACT);
         if (interactPressed) {
-          this.lootSystem.processInteract(sessionId);
+          // Priority: dismount > mount vehicle > open locker
+          if (this.vehicleSystem.isPlayerMounted(sessionId)) {
+            this.vehicleSystem.processDismount(sessionId);
+          } else if (!this.vehicleSystem.processMount(sessionId)) {
+            this.lootSystem.processInteract(sessionId);
+          }
         }
 
         const useConsumablePressed = !!(input.buttons & Button.USE_CONSUMABLE) && !(prev & Button.USE_CONSUMABLE);
@@ -339,8 +370,10 @@ export class GameRoom extends Room<GameStateSchema> {
         this.prevButtons.set(sessionId, input.buttons);
       }
 
-      // Process combat input (CombatSystem internally gates by match phase)
-      this.combatSystem.processInput(sessionId, input, tick);
+      // Process combat input (skip if mounted — can't fight while driving)
+      if (!this.vehicleSystem.isPlayerMounted(sessionId)) {
+        this.combatSystem.processInput(sessionId, input, tick);
+      }
     }
 
     // Clear queue
@@ -348,6 +381,9 @@ export class GameRoom extends Room<GameStateSchema> {
 
     // Tick pickups (auto-collect)
     this.lootSystem.tickPickups(tick);
+
+    // Tick vehicles (durability, run-over)
+    this.vehicleSystem.tickVehicles(TICK_INTERVAL_MS);
 
     // Tick projectiles
     this.combatSystem.tickProjectiles(TICK_INTERVAL_MS);

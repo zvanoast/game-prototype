@@ -169,70 +169,98 @@ export class ProceduralAudio {
     });
   }
 
-  // ─── Per-weapon shoot sounds ──────────────────────────────────────
+  // ─── Per-weapon shoot/throw sounds ───────────────────────────────
 
-  /** Darts: high-pitched tick, 0.05s */
-  generateShoot_darts(): AudioBuffer {
-    return this.createBuffer(0.05, (buf) => {
+  /** Records: vinyl whoosh, 0.08s */
+  generateShoot_records(): AudioBuffer {
+    return this.createBuffer(0.08, (buf) => {
       const data = buf.getChannelData(0);
       for (let i = 0; i < data.length; i++) {
         const t = i / this.ctx.sampleRate;
-        const env = Math.exp(-t * 80) * 0.35;
-        data[i] = Math.sin(2 * Math.PI * 2200 * t) * env;
+        const env = Math.exp(-t * 40) * 0.3;
+        const whoosh = (Math.random() * 2 - 1) * 0.5 + Math.sin(2 * Math.PI * 400 * t) * 0.5;
+        data[i] = whoosh * env;
+        if (i > 0) data[i] = data[i] * 0.4 + data[i - 1] * 0.6;
       }
     });
   }
 
-  /** Plates: ceramic whoosh, 0.12s */
-  generateShoot_plates(): AudioBuffer {
-    return this.createBuffer(0.12, (buf) => {
+  /** Box of Antiques: clatter, 0.1s */
+  generateShoot_box_of_antiques(): AudioBuffer {
+    return this.createBuffer(0.1, (buf) => {
       const data = buf.getChannelData(0);
       for (let i = 0; i < data.length; i++) {
         const t = i / this.ctx.sampleRate;
-        const env = Math.sin(Math.PI * t / 0.12) * 0.3;
-        const freq = 600 + 400 * Math.sin(t * 30);
-        data[i] = Math.sin(2 * Math.PI * freq * t) * env;
+        const env = Math.exp(-t * 30) * 0.35;
+        const clatter = (Math.random() * 2 - 1) * 0.6 + Math.sin(2 * Math.PI * 600 * t) * 0.4;
+        data[i] = clatter * env;
+      }
+    });
+  }
+
+  /** Knife Set: sharp flick, 0.05s */
+  generateShoot_knife_set(): AudioBuffer {
+    return this.createBuffer(0.05, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const env = Math.exp(-t * 80) * 0.4;
+        data[i] = Math.sin(2 * Math.PI * 2500 * t) * env;
+      }
+    });
+  }
+
+  /** Rare Coins: metallic ping, 0.06s */
+  generateShoot_rare_coins(): AudioBuffer {
+    return this.createBuffer(0.06, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const env = Math.exp(-t * 50) * 0.3;
+        const ping = Math.sin(2 * Math.PI * 3200 * t) + Math.sin(2 * Math.PI * 4800 * t) * 0.3;
+        data[i] = ping * env;
+      }
+    });
+  }
+
+  /** Paint Cans: sloshy thunk, 0.1s */
+  generateShoot_paint_cans(): AudioBuffer {
+    return this.createBuffer(0.1, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const env = Math.exp(-t * 25) * 0.4;
+        const thunk = Math.sin(2 * Math.PI * 200 * t) * 0.5;
+        const slosh = (Math.random() * 2 - 1) * 0.5;
+        data[i] = (thunk + slosh) * env;
         if (i > 0) data[i] = data[i] * 0.5 + data[i - 1] * 0.5;
       }
     });
   }
 
-  /** Staple gun: metallic click, 0.04s */
-  generateShoot_staple_gun(): AudioBuffer {
+  /** Microwave: heavy crunch, 0.15s */
+  generateShoot_microwave(): AudioBuffer {
+    return this.createBuffer(0.15, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const env = Math.exp(-t * 15) * 0.5;
+        const bass = Math.sin(2 * Math.PI * 80 * t) * 0.6;
+        const crunch = (Math.random() * 2 - 1) * 0.4;
+        data[i] = (bass + crunch) * env;
+      }
+    });
+  }
+
+  /** BB Gun: air pop, 0.04s */
+  generateShoot_bb_gun(): AudioBuffer {
     return this.createBuffer(0.04, (buf) => {
       const data = buf.getChannelData(0);
       for (let i = 0; i < data.length; i++) {
         const t = i / this.ctx.sampleRate;
-        const env = Math.exp(-t * 120) * 0.4;
-        const click = Math.sin(2 * Math.PI * 3000 * t) * 0.5 + (Math.random() * 2 - 1) * 0.5;
-        data[i] = click * env;
-      }
-    });
-  }
-
-  /** Vase: heavy thunk, 0.1s */
-  generateShoot_vase(): AudioBuffer {
-    return this.createBuffer(0.1, (buf) => {
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < data.length; i++) {
-        const t = i / this.ctx.sampleRate;
-        const env = Math.exp(-t * 25) * 0.5;
-        const bass = Math.sin(2 * Math.PI * 180 * t);
-        const mid = Math.sin(2 * Math.PI * 450 * t) * 0.3;
-        data[i] = (bass + mid) * env;
-      }
-    });
-  }
-
-  /** Rubber band gun: snap/twang, 0.06s */
-  generateShoot_rubber_band_gun(): AudioBuffer {
-    return this.createBuffer(0.06, (buf) => {
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < data.length; i++) {
-        const t = i / this.ctx.sampleRate;
-        const env = Math.exp(-t * 60) * 0.35;
-        const freq = 1200 - 800 * (t / 0.06); // descending twang
-        data[i] = Math.sin(2 * Math.PI * freq * t) * env;
+        const env = Math.exp(-t * 100) * 0.35;
+        const pop = Math.sin(2 * Math.PI * 1800 * t) * 0.6 + (Math.random() * 2 - 1) * 0.4;
+        data[i] = pop * env;
       }
     });
   }
@@ -251,48 +279,21 @@ export class ProceduralAudio {
     });
   }
 
-  /** Hammer: heavy metal clang, 0.12s */
-  generateMelee_hammer(): AudioBuffer {
+  /** Oboe: reedy toot, 0.12s */
+  generateMelee_oboe(): AudioBuffer {
     return this.createBuffer(0.12, (buf) => {
       const data = buf.getChannelData(0);
       for (let i = 0; i < data.length; i++) {
         const t = i / this.ctx.sampleRate;
-        const env = Math.exp(-t * 20) * 0.4;
-        const clang = Math.sin(2 * Math.PI * 800 * t) + Math.sin(2 * Math.PI * 1200 * t) * 0.5;
-        const bass = Math.sin(2 * Math.PI * 100 * t) * 0.5;
-        data[i] = (clang + bass) * env;
+        const env = Math.exp(-t * 20) * 0.3;
+        const reed = Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 880 * t) * 0.4;
+        data[i] = reed * env;
       }
     });
   }
 
-  /** Lamp: glass ring, 0.15s */
-  generateMelee_lamp(): AudioBuffer {
-    return this.createBuffer(0.15, (buf) => {
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < data.length; i++) {
-        const t = i / this.ctx.sampleRate;
-        const env = Math.exp(-t * 15) * 0.3;
-        const ring = Math.sin(2 * Math.PI * 2000 * t) + Math.sin(2 * Math.PI * 3000 * t) * 0.3;
-        data[i] = ring * env;
-      }
-    });
-  }
-
-  /** Frying pan: pan clang, 0.1s */
-  generateMelee_frying_pan(): AudioBuffer {
-    return this.createBuffer(0.1, (buf) => {
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < data.length; i++) {
-        const t = i / this.ctx.sampleRate;
-        const env = Math.exp(-t * 25) * 0.4;
-        const clang = Math.sin(2 * Math.PI * 600 * t) + Math.sin(2 * Math.PI * 900 * t) * 0.6;
-        data[i] = clang * env;
-      }
-    });
-  }
-
-  /** Baseball bat: wooden crack, 0.08s */
-  generateMelee_baseball_bat(): AudioBuffer {
+  /** Signed Baseball Bat: wooden crack, 0.08s */
+  generateMelee_signed_baseball_bat(): AudioBuffer {
     return this.createBuffer(0.08, (buf) => {
       const data = buf.getChannelData(0);
       for (let i = 0; i < data.length; i++) {
@@ -304,18 +305,71 @@ export class ProceduralAudio {
     });
   }
 
-  /** Golf club: metal whoosh, 0.12s */
-  generateMelee_golf_club(): AudioBuffer {
+  /** Ceremonial Sword: metallic ring, 0.15s */
+  generateMelee_ceremonial_sword(): AudioBuffer {
+    return this.createBuffer(0.15, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const env = Math.exp(-t * 15) * 0.35;
+        const ring = Math.sin(2 * Math.PI * 1200 * t) + Math.sin(2 * Math.PI * 1800 * t) * 0.4;
+        data[i] = ring * env;
+      }
+    });
+  }
+
+  /** Skis: whooshy swipe, 0.1s */
+  generateMelee_skis(): AudioBuffer {
+    return this.createBuffer(0.1, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const env = Math.sin(Math.PI * t / 0.1) * 0.3;
+        const noise = (Math.random() * 2 - 1);
+        data[i] = noise * env;
+        if (i > 0) data[i] = data[i] * 0.3 + data[i - 1] * 0.7;
+      }
+    });
+  }
+
+  /** Kayak: heavy thud, 0.12s */
+  generateMelee_kayak(): AudioBuffer {
     return this.createBuffer(0.12, (buf) => {
       const data = buf.getChannelData(0);
       for (let i = 0; i < data.length; i++) {
         const t = i / this.ctx.sampleRate;
-        const whooshEnv = Math.sin(Math.PI * t / 0.12) * 0.2;
-        const metalEnv = Math.exp(-t * 30) * 0.3;
-        const whoosh = (Math.random() * 2 - 1) * whooshEnv;
-        const metal = Math.sin(2 * Math.PI * 1500 * t) * metalEnv;
-        data[i] = whoosh + metal;
-        if (i > 0) data[i] = data[i] * 0.4 + data[i - 1] * 0.6;
+        const env = Math.exp(-t * 18) * 0.45;
+        const bass = Math.sin(2 * Math.PI * 90 * t) * 0.6;
+        const crack = (Math.random() * 2 - 1) * 0.4;
+        data[i] = (bass + crack) * env;
+      }
+    });
+  }
+
+  /** Rusty Power Drill: buzzy grind, 0.1s */
+  generateMelee_rusty_power_drill(): AudioBuffer {
+    return this.createBuffer(0.1, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const env = Math.exp(-t * 25) * 0.35;
+        const buzz = Math.sin(2 * Math.PI * 150 * t) * Math.sin(2 * Math.PI * 1800 * t);
+        const noise = (Math.random() * 2 - 1) * 0.3;
+        data[i] = (buzz + noise) * env;
+      }
+    });
+  }
+
+  /** Indian Rug: fabric flap, 0.15s */
+  generateMelee_indian_rug(): AudioBuffer {
+    return this.createBuffer(0.15, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const env = Math.sin(Math.PI * t / 0.15) * 0.25;
+        const noise = (Math.random() * 2 - 1);
+        data[i] = noise * env;
+        if (i > 0) data[i] = data[i] * 0.2 + data[i - 1] * 0.8;
       }
     });
   }
@@ -357,6 +411,62 @@ export class ProceduralAudio {
         const freq = 600 - 300 * (t / 0.1);
         const env = Math.exp(-t * 20) * 0.25;
         data[i] = Math.sin(2 * Math.PI * freq * t) * env;
+      }
+    });
+  }
+
+  // ─── Vehicle sounds ─────────────────────────────────────────────────
+
+  /** Vehicle mount: gear-shift clunk, 0.12s */
+  generateVehicleMount(): AudioBuffer {
+    return this.createBuffer(0.12, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const env = Math.exp(-t * 25) * 0.35;
+        const clunk = Math.sin(2 * Math.PI * 180 * t) * 0.6 + (Math.random() * 2 - 1) * 0.4;
+        data[i] = clunk * env;
+      }
+    });
+  }
+
+  /** Vehicle dismount: softer release click, 0.08s */
+  generateVehicleDismount(): AudioBuffer {
+    return this.createBuffer(0.08, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const env = Math.exp(-t * 50) * 0.25;
+        data[i] = Math.sin(2 * Math.PI * 300 * t) * env;
+      }
+    });
+  }
+
+  /** Vehicle destroyed: metallic crunch + descending tone, 0.3s */
+  generateVehicleDestroyed(): AudioBuffer {
+    return this.createBuffer(0.3, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const freq = 300 - 200 * (t / 0.3);
+        const env = Math.exp(-t * 8) * 0.4;
+        const crunch = (Math.random() * 2 - 1) * 0.5;
+        const tone = Math.sin(2 * Math.PI * freq * t) * 0.5;
+        data[i] = (crunch + tone) * env;
+      }
+    });
+  }
+
+  /** Vehicle hit (run over): heavy impact, 0.1s */
+  generateVehicleHit(): AudioBuffer {
+    return this.createBuffer(0.1, (buf) => {
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / this.ctx.sampleRate;
+        const env = Math.exp(-t * 30) * 0.45;
+        const bass = Math.sin(2 * Math.PI * 100 * t) * 0.7;
+        const noise = (Math.random() * 2 - 1) * 0.3;
+        data[i] = (bass + noise) * env;
       }
     });
   }

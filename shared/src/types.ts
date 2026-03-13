@@ -74,17 +74,23 @@ export enum WeaponType {
 export type WeaponSlot = "melee" | "ranged";
 
 export enum WeaponId {
-  Fists          = "fists",
-  Hammer         = "hammer",
-  Lamp           = "lamp",
-  FryingPan      = "frying_pan",
-  BaseballBat    = "baseball_bat",
-  GolfClub       = "golf_club",
-  Darts          = "darts",
-  Plates         = "plates",
-  StapleGun      = "staple_gun",
-  Vase           = "vase",
-  RubberBandGun  = "rubber_band_gun",
+  // Melee
+  Fists            = "fists",
+  Oboe             = "oboe",
+  SignedBaseballBat = "signed_baseball_bat",
+  CeremonialSword  = "ceremonial_sword",
+  Skis             = "skis",
+  Kayak            = "kayak",
+  RustyPowerDrill  = "rusty_power_drill",
+  IndianRug        = "indian_rug",
+  // Ranged / Throwable
+  Records          = "records",
+  BoxOfAntiques    = "box_of_antiques",
+  KnifeSet         = "knife_set",
+  RareCoins        = "rare_coins",
+  PaintCans        = "paint_cans",
+  Microwave        = "microwave",
+  BBGun            = "bb_gun",
 }
 
 // --- Consumable ---
@@ -133,6 +139,10 @@ export interface WeaponConfig {
   meleeRange?: number;
   meleeActiveFrames?: number;
   meleeCooldownMs?: number;
+  /** If true, melee attacks continuously while the button is held */
+  meleeHoldToAttack?: boolean;
+  // Ammo (ranged/throwable weapons only)
+  maxAmmo?: number;
   // Knockback tuning (optional per-weapon override)
   knockback?: number;
   meleeKnockback?: number;

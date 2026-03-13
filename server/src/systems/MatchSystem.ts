@@ -3,6 +3,7 @@ import { GameStateSchema, PlayerSchema } from "../state/GameState";
 import { LootSystem } from "./LootSystem";
 import { CombatSystem } from "./CombatSystem";
 import { BuffSystem } from "./BuffSystem";
+import type { VehicleSystem } from "./VehicleSystem";
 import {
   MIN_PLAYERS_TO_START,
   COUNTDOWN_DURATION_MS,
@@ -17,6 +18,7 @@ export class MatchSystem {
   private lootSystem: LootSystem;
   private combatSystem!: CombatSystem;
   private buffSystem: BuffSystem | null = null;
+  private vehicleSystem: VehicleSystem | null = null;
 
   private phase: MatchPhase = "waiting";
   private countdownTimer = 0;
@@ -49,6 +51,10 @@ export class MatchSystem {
 
   setBuffSystem(buffSystem: BuffSystem) {
     this.buffSystem = buffSystem;
+  }
+
+  setVehicleSystem(vehicleSystem: VehicleSystem) {
+    this.vehicleSystem = vehicleSystem;
   }
 
   getPhase(): MatchPhase {
@@ -266,6 +272,11 @@ export class MatchSystem {
     // Reset buffs
     if (this.buffSystem) {
       this.buffSystem.resetForNewMatch();
+    }
+
+    // Reset vehicles (despawn old, respawn fresh)
+    if (this.vehicleSystem) {
+      this.vehicleSystem.resetForNewMatch();
     }
 
     // Reset state

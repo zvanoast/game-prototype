@@ -24,6 +24,7 @@ export class PlayerSchema extends Schema {
   @type("uint32") lastProcessedInput: number = 0;
   @type("string") meleeWeaponId: string = "fists";
   @type("string") rangedWeaponId: string = "";
+  @type("int16") rangedAmmo: number = 0;
   @type("boolean") eliminated: boolean = false;
   @type("string") displayName: string = "";
   @type("string") consumableSlot1: string = "";
@@ -32,6 +33,18 @@ export class PlayerSchema extends Schema {
   @type("float32") speedMultiplier: number = 1.0;
   @type("float32") damageMultiplier: number = 1.0;
   @type("uint8") characterIndex: number = 0;
+  @type("uint8") mountedVehicleSchemaId: number = 0; // 0 = on foot
+}
+
+export class VehicleSchema extends Schema {
+  @type("uint8") id: number = 0;
+  @type("string") vehicleId: string = "";
+  @type("float32") x: number = 0;
+  @type("float32") y: number = 0;
+  @type("float32") angle: number = 0;
+  @type("string") riderId: string = "";
+  @type("boolean") destroyed: boolean = false;
+  @type("float32") durabilityPct: number = 1.0;
 }
 
 export class LockerSchema extends Schema {
@@ -56,6 +69,7 @@ export class GameStateSchema extends Schema {
   @type([ ProjectileSchema ]) projectiles = new ArraySchema<ProjectileSchema>();
   @type([ LockerSchema ]) lockers = new ArraySchema<LockerSchema>();
   @type([ PickupSchema ]) pickups = new ArraySchema<PickupSchema>();
+  @type([ VehicleSchema ]) vehicles = new ArraySchema<VehicleSchema>();
   @type("string") phase: string = "waiting"; // waiting | countdown | playing | ended
   @type("uint32") tick: number = 0;
   @type("uint8") alivePlayers: number = 0;

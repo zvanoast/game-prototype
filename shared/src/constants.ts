@@ -85,6 +85,13 @@ export const MAX_CONSUMABLE_SLOTS = 2;
 export const CONSUMABLE_USE_COOLDOWN_MS = 500;
 export const CONSUMABLE_SPAWN_CHANCE = 0.3;  // 30% chance locker has consumable instead of weapon
 
+// --- Vehicles ---
+export const VEHICLE_INTERACT_RANGE = 48;
+export const VEHICLE_SPAWN_MIN = 3;
+export const VEHICLE_SPAWN_MAX = 5;
+export const VEHICLE_RUN_OVER_COOLDOWN_MS = 500;
+export const VEHICLE_RUN_OVER_RADIUS = 24;
+
 // --- Network ---
 export const SERVER_PORT = 3001;
 export const MAX_PLAYERS_PER_ROOM = 20;
