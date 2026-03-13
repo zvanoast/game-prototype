@@ -195,7 +195,7 @@ export class LootSystem {
     const weaponConfig = getWeaponConfig(pickup.weaponId);
     if (!weaponConfig) return;
 
-    this.equipWeapon(sessionId, weaponConfig);
+    this.equipWeapon(sessionId, weaponConfig, pickup.ammo);
     this.pickupSpawnTick.delete(pickup.id);
 
     // Remove from array
@@ -266,14 +266,15 @@ export class LootSystem {
     return used;
   }
 
-  /** Equip a weapon, dropping old weapon from that slot */
-  private equipWeapon(sessionId: string, weapon: WeaponConfig) {
+  /** Equip a weapon, dropping old weapon from that slot. pickupAmmo >= 0 means use retained ammo. */
+  private equipWeapon(sessionId: string, weapon: WeaponConfig, pickupAmmo = -1) {
     const player = this.state.players.get(sessionId);
     const equip = this.playerEquipment.get(sessionId);
     if (!player || !equip) return;
 
     const slot = weapon.slot;
     let droppedId = "";
+    let droppedAmmo = -1;
 
     if (slot === "melee") {
       const oldId = equip.meleeWeaponId;
@@ -287,9 +288,10 @@ export class LootSystem {
       const oldId = equip.rangedWeaponId;
       if (oldId) {
         droppedId = oldId;
+        droppedAmmo = equip.rangedAmmo; // retain current ammo on dropped weapon
       }
       equip.rangedWeaponId = weapon.id;
-      equip.rangedAmmo = weapon.maxAmmo ?? 0;
+      equip.rangedAmmo = pickupAmmo >= 0 ? pickupAmmo : (weapon.maxAmmo ?? 0);
       player.rangedWeaponId = weapon.id;
       player.rangedAmmo = equip.rangedAmmo;
     }
@@ -300,8 +302,9 @@ export class LootSystem {
       const dropDist = PLAYER_RADIUS + PICKUP_RADIUS + 8;
       const dropX = player.x - Math.cos(player.angle) * dropDist;
       const dropY = player.y - Math.sin(player.angle) * dropDist;
-      this.spawnPickup(dropX, dropY, droppedId, "");
+      this.spawnPickup(dropX, dropY, droppedId, "", droppedAmmo);
     }
+
 
     this.room.broadcast("weapon_pickup", {
       sessionId,
@@ -347,9 +350,9 @@ export class LootSystem {
       this.spawnPickup(x + offsets[offsetIdx++], y, equip.meleeWeaponId, "");
     }
 
-    // Drop ranged if equipped
+    // Drop ranged if equipped (retain remaining ammo)
     if (equip.rangedWeaponId) {
-      this.spawnPickup(x + offsets[offsetIdx++], y, equip.rangedWeaponId, "");
+      this.spawnPickup(x + offsets[offsetIdx++], y, equip.rangedWeaponId, "", equip.rangedAmmo);
     }
 
     // Drop consumables
@@ -362,7 +365,7 @@ export class LootSystem {
   }
 
   /** Create a pickup on the ground */
-  private spawnPickup(x: number, y: number, weaponId: string, consumableId: string) {
+  private spawnPickup(x: number, y: number, weaponId: string, consumableId: string, ammo = -1) {
     const pickup = new PickupSchema();
     pickup.id = this.nextPickupId++;
     if (this.nextPickupId > 65535) this.nextPickupId = 1;
@@ -370,6 +373,7 @@ export class LootSystem {
     pickup.y = y;
     pickup.weaponId = weaponId;
     pickup.consumableId = consumableId;
+    pickup.ammo = ammo;
     this.state.pickups.push(pickup);
     this.pickupSpawnTick.set(pickup.id, this.currentTick);
   }

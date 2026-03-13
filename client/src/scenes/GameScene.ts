@@ -157,6 +157,7 @@ export class GameScene extends Phaser.Scene {
   // Pickups
   private pickupSprites = new Map<number, Phaser.GameObjects.Container>();
   private pickupWeaponIds = new Map<number, string>(); // pickup id → weapon id
+  private pickupAmmo = new Map<number, number>(); // pickup id → retained ammo (-1 = full)
 
   // Pickup tooltip
   private pickupTooltip!: Phaser.GameObjects.Container;
@@ -226,6 +227,7 @@ export class GameScene extends Phaser.Scene {
     this.lockerSprites.clear();
     this.pickupSprites.clear();
     this.pickupWeaponIds.clear();
+    this.pickupAmmo.clear();
     this.vehicleContainers.clear();
     this.vehicleDurabilityBars.clear();
     this.localMountedVehicleId = 0;
@@ -729,6 +731,7 @@ export class GameScene extends Phaser.Scene {
 
         this.pickupSprites.set(pickup.id, container);
         this.pickupWeaponIds.set(pickup.id, pickup.weaponId);
+        this.pickupAmmo.set(pickup.id, pickup.ammo ?? -1);
 
         pickup.onChange(() => {
           const c = this.pickupSprites.get(pickup.id);
@@ -745,6 +748,7 @@ export class GameScene extends Phaser.Scene {
           this.pickupSprites.delete(pickup.id);
         }
         this.pickupWeaponIds.delete(pickup.id);
+        this.pickupAmmo.delete(pickup.id);
         if (this.hoveredPickupId === pickup.id) {
           this.hoveredPickupId = null;
           this.pickupTooltip.setVisible(false);
@@ -1106,18 +1110,21 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Button state: track attack (left mouse) and melee (right mouse)
-    // Suppress attack while hovering over a pickup to prevent accidental firing on click-to-loot
+    // When hovering a pickup, swallow the mouse so the server never sees a press or release edge.
     const hoveringPickup = this.hoveredPickupId !== null;
-    const leftDown = pointer.leftButtonDown() && !hoveringPickup && !this.pickupClickedThisFrame;
+    const rawLeftDown = pointer.leftButtonDown();
+    const leftDown = hoveringPickup || this.pickupClickedThisFrame ? false : rawLeftDown;
+    // If hovering pickup and mouse is held, keep ATTACK bit matching previous frame to avoid false release
+    const forceAttackBit = hoveringPickup && rawLeftDown && this.attackHeld;
     const rightDown = pointer.rightButtonDown();
     this.pickupClickedThisFrame = false;
     let buttons = 0;
-    if (leftDown) buttons |= Button.ATTACK;
+    if (leftDown || forceAttackBit) buttons |= Button.ATTACK;
     if (rightDown) buttons |= Button.MELEE;
     if (this.keys.E.isDown) buttons |= Button.INTERACT;
     if (this.keys.Q.isDown) buttons |= Button.USE_CONSUMABLE;
     if (this.keys.SPACE.isDown) buttons |= Button.DASH;
-    this.attackHeld = leftDown;
+    this.attackHeld = leftDown || forceAttackBit;
 
     // Record input to buffer
     this.inputBuffer.recordFrame(dx, dy, buttons, aimAngle);
@@ -1634,10 +1641,12 @@ export class GameScene extends Phaser.Scene {
       lines.push(`Arc: ${weapon.meleeArcDegrees ?? 0}°`);
       lines.push(`Cooldown: ${weapon.meleeCooldownMs ?? 0}ms`);
     } else {
+      const retainedAmmo = this.pickupAmmo.get(this.hoveredPickupId!) ?? -1;
+      const ammoCount = retainedAmmo >= 0 ? retainedAmmo : (weapon.maxAmmo ?? 0);
+      lines.push(`Ammo: ${ammoCount}/${weapon.maxAmmo ?? 0}`);
       lines.push(`Damage: ${weapon.damage ?? 0}`);
       lines.push(`Fire rate: ${weapon.fireRateMs ?? 0}ms`);
       lines.push(`Range: ${weapon.projectileRange ?? 0}`);
-      lines.push(`Speed: ${weapon.projectileSpeed ?? 0}`);
     }
     lines.push("[Click to pick up]");
 

@@ -62,6 +62,7 @@ export class PickupSchema extends Schema {
   @type("float32") y: number = 0;
   @type("string") weaponId: string = "";
   @type("string") consumableId: string = "";
+  @type("int16") ammo: number = -1; // -1 = use weapon's maxAmmo, >=0 = retained ammo
 }
 
 export class GameStateSchema extends Schema {
