@@ -1106,8 +1106,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Button state: track attack (left mouse) and melee (right mouse)
-    // Suppress attack if a pickup was clicked this frame to avoid firing the newly equipped weapon
-    const leftDown = pointer.leftButtonDown() && !this.pickupClickedThisFrame;
+    // Suppress attack while hovering over a pickup to prevent accidental firing on click-to-loot
+    const hoveringPickup = this.hoveredPickupId !== null;
+    const leftDown = pointer.leftButtonDown() && !hoveringPickup && !this.pickupClickedThisFrame;
     const rightDown = pointer.rightButtonDown();
     this.pickupClickedThisFrame = false;
     let buttons = 0;
