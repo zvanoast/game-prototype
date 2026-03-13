@@ -5,9 +5,11 @@ import { LootSystem } from "../systems/LootSystem";
 import { BuffSystem } from "../systems/BuffSystem";
 import { MatchSystem } from "../systems/MatchSystem";
 import { VehicleSystem } from "../systems/VehicleSystem";
+import { BotManager } from "../systems/BotManager";
 import {
   TICK_RATE,
   TICK_INTERVAL_MS,
+  SANDBOX_BOT_COUNT,
   PLAYER_RADIUS,
   MAX_HEALTH,
   MAX_PLAYERS_PER_ROOM,
@@ -96,11 +98,19 @@ export class GameRoom extends Room<GameStateSchema> {
     this.matchSystem.setVehicleSystem(this.vehicleSystem);
     this.vehicleSystem.setCombatSystem(this.combatSystem);
 
-    // Sandbox mode: skip match lifecycle, spawn all items + vehicles in neat layout
+    // Sandbox mode: skip match lifecycle, spawn all items + vehicles + bots
     if (options?.sandbox) {
       this.matchSystem.enableSandbox();
       this.lootSystem.spawnAllItems();
       this.vehicleSystem.spawnAllVehicles();
+      const botManager = new BotManager(this.state, this.takenCharacters, () => this.findSafeSpawn());
+      botManager.spawnBots(
+        SANDBOX_BOT_COUNT,
+        this.combatSystem,
+        this.lootSystem,
+        this.buffSystem,
+        this.matchSystem
+      );
       console.log("Sandbox mode enabled");
     } else {
       // Normal match: random vehicle spawns

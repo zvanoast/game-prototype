@@ -2,11 +2,9 @@ import Phaser from "phaser";
 import type { WeaponConfig } from "shared";
 import { getWeaponConfig, WEAPON_FISTS } from "shared";
 
-import type { TestDummy } from "../entities/TestDummy";
 import {
   DASH_STRIKE_RANGE_MULT,
   DASH_STRIKE_DAMAGE_MULT,
-  KNOCKBACK_PROJECTILE,
   KNOCKBACK_MELEE,
 } from "shared";
 
@@ -15,10 +13,6 @@ export class CombatManager {
   private initialized = false;
   private player!: Phaser.Physics.Arcade.Sprite;
   private wallLayer!: Phaser.Tilemaps.TilemapLayer;
-  private dummies: TestDummy[] = [];
-
-  // Multiplayer mode: when true, predicted projectiles only hit walls, melee is visual-only
-  private multiplayerMode = false;
 
   // Dynamic weapon configs
   private meleeConfig: WeaponConfig = WEAPON_FISTS;
@@ -50,10 +44,6 @@ export class CombatManager {
     this.scene = scene;
   }
 
-  setMultiplayerMode(enabled: boolean) {
-    this.multiplayerMode = enabled;
-  }
-
   /** Set melee weapon by ID */
   setMeleeWeapon(id: string) {
     this.meleeConfig = getWeaponConfig(id) ?? WEAPON_FISTS;
@@ -78,12 +68,10 @@ export class CombatManager {
 
   init(
     player: Phaser.Physics.Arcade.Sprite,
-    wallLayer: Phaser.Tilemaps.TilemapLayer,
-    dummies: TestDummy[]
+    wallLayer: Phaser.Tilemaps.TilemapLayer
   ) {
     this.player = player;
     this.wallLayer = wallLayer;
-    this.dummies = dummies;
 
     // Projectile group with pooling
     this.projectiles = this.scene.physics.add.group({
@@ -110,33 +98,10 @@ export class CombatManager {
       this.destroyProjectile(proj);
     });
 
-    // Collisions: projectiles vs dummies (dummies only exist in sandbox/test mode)
-    this.registerDummyOverlaps();
-
     // Set up mouse input
     this.setupMouseInput();
 
     this.initialized = true;
-  }
-
-  /** Register projectile-vs-dummy overlaps. Can be called after dummies are spawned late. */
-  registerDummyOverlaps() {
-    if (!this.projectiles) return;
-    for (const dummy of this.dummies) {
-      this.scene.physics.add.overlap(this.projectiles, dummy, (obj1, obj2) => {
-        const proj = (obj1 !== dummy ? obj1 : obj2) as Phaser.Physics.Arcade.Sprite;
-        const damage = proj.getData("damage") ?? (this.rangedConfig?.damage ?? 15);
-        const knockback = KNOCKBACK_PROJECTILE;
-
-        const kbAngle = Math.atan2(dummy.y - this.player.y, dummy.x - this.player.x);
-
-        this.scene.events.emit("particle:impact", proj.x, proj.y, 0xffff00);
-        this.scene.events.emit("sfx:impact");
-
-        this.destroyProjectile(proj);
-        dummy.takeDamage(damage, kbAngle, knockback);
-      });
-    }
   }
 
   private setupMouseInput() {
@@ -292,7 +257,7 @@ export class CombatManager {
     this.scene.events.emit("particle:muzzle", sx, sy, this.aimAngle);
   }
 
-  tryMelee(rangeMult = 1, damageMult = 1, knockbackMult = 1) {
+  tryMelee(rangeMult = 1, _damageMult = 1, _knockbackMult = 1) {
     if (!this.initialized) return;
     const now = this.scene.time.now;
     if (now - this.lastMeleeTime < (this.meleeConfig.meleeCooldownMs ?? 400)) return;
@@ -302,44 +267,7 @@ export class CombatManager {
 
     this.scene.events.emit("sfx:melee_weapon", this.meleeConfig.id);
 
-    // Hit dummies locally (dummies only exist in sandbox/test mode)
-    if (this.dummies.length > 0) {
-      const arcHalf = Phaser.Math.DegToRad((this.meleeConfig.meleeArcDegrees ?? 90) / 2);
-      const damage = (this.meleeConfig.meleeDamage ?? 10) * damageMult;
-      const knockback = KNOCKBACK_MELEE * knockbackMult;
-
-      let hitSomething = false;
-
-      for (const dummy of this.dummies) {
-        if (!dummy.isAlive()) continue;
-
-        const dx = dummy.x - this.player.x;
-        const dy = dummy.y - this.player.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist > range) continue;
-
-        const angleToDummy = Math.atan2(dy, dx);
-        let angleDiff = angleToDummy - this.aimAngle;
-        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-
-        if (Math.abs(angleDiff) <= arcHalf) {
-          const kbAngle = Math.atan2(dy, dx);
-          dummy.takeDamage(damage, kbAngle, knockback);
-          hitSomething = true;
-
-          this.scene.events.emit("particle:impact", dummy.x, dummy.y, 0xffffff);
-        }
-      }
-
-      if (hitSomething) {
-        this.scene.events.emit("sfx:melee_hit");
-        this.scene.events.emit("juice:melee_hit", this.player, this.dummies);
-      }
-    }
-
-    // Show melee arc visual
+    // Show melee arc visual (hit detection is server-authoritative)
     this.meleeArcFrames = this.meleeConfig.meleeActiveFrames ?? 4;
     this.meleeArcTimer = this.meleeArcFrames;
     this.meleeArcRange = range;

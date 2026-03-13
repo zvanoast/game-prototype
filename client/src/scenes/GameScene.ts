@@ -15,7 +15,6 @@ import { ScreenShake } from "../systems/ScreenShake";
 import { HitStop } from "../systems/HitStop";
 import { ParticleManager } from "../systems/ParticleManager";
 import { SoundManager } from "../systems/SoundManager";
-import { TestDummy, DUMMY_SPAWN_POSITIONS } from "../entities/TestDummy";
 import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
@@ -173,9 +172,6 @@ export class GameScene extends Phaser.Scene {
   private vehicleDurabilityBars = new Map<number, Phaser.GameObjects.Graphics>();
   private localMountedVehicleId = 0; // 0 = on foot
 
-  // Dummies
-  private dummies: TestDummy[] = [];
-
   // Server projectile count for debug
   private serverProjectileCount = 0;
 
@@ -234,7 +230,6 @@ export class GameScene extends Phaser.Scene {
     this.vehicleDurabilityBars.clear();
     this.localMountedVehicleId = 0;
     this.hoveredPickupId = null;
-    this.dummies = [];
 
     // Rebuild player_sheet from chosen character (destroys old texture, re-registers frames)
     const chosenFrame = CHARACTER_DEFS[this.characterIndex]?.frame ?? CHARACTER_DEFS[0].frame;
@@ -428,8 +423,7 @@ export class GameScene extends Phaser.Scene {
     // Init combat manager with player
     this.combatManager.init(
       this.localPlayer,
-      this.tilemapManager.getWallLayer(),
-      this.dummies
+      this.tilemapManager.getWallLayer()
     );
 
     // Wire state machine callbacks
@@ -464,11 +458,6 @@ export class GameScene extends Phaser.Scene {
       this.particles.impact(x, y, color);
     });
 
-    // Death particles
-    this.events.on("dummy:death", (x: number, y: number) => {
-      this.particles.deathExplosion(x, y);
-    });
-
     // Dash event
     this.events.on("state:dash_start", () => {
       this.events.emit("sfx:dash");
@@ -486,19 +475,6 @@ export class GameScene extends Phaser.Scene {
     try {
       const room = await this.network.connect(options, roomType);
       this.localSessionId = room.sessionId;
-
-      // Enable multiplayer mode on combat manager (disable local damage)
-      this.combatManager.setMultiplayerMode(true);
-
-      // In sandbox, spawn dummies for local target practice
-      if (this.testMode) {
-        for (const pos of DUMMY_SPAWN_POSITIONS) {
-          const dummy = new TestDummy(this, pos.x, pos.y, this.wallRects);
-          this.dummies.push(dummy);
-        }
-        // Re-register overlaps now that dummies exist
-        this.combatManager.registerDummyOverlaps();
-      }
 
       // Track phase changes from state
       const trackState = () => {
@@ -1136,6 +1112,7 @@ export class GameScene extends Phaser.Scene {
     this.pickupClickedThisFrame = false;
     let buttons = 0;
     if (leftDown) buttons |= Button.ATTACK;
+    if (rightDown) buttons |= Button.MELEE;
     if (this.keys.E.isDown) buttons |= Button.INTERACT;
     if (this.keys.Q.isDown) buttons |= Button.USE_CONSUMABLE;
     if (this.keys.SPACE.isDown) buttons |= Button.DASH;
@@ -1210,8 +1187,8 @@ export class GameScene extends Phaser.Scene {
       // come from server state so they properly disappear on hit.
       const attackReleased = this.prevAttackHeld && !leftDown;
       if (attackReleased && this.stateMachine.canShoot()) {
-        if (this.network.isConnected() && !this.testMode) {
-          // Multiplayer: just emit muzzle flash/sound, server drives projectile sprite
+        if (this.network.isConnected()) {
+          // Multiplayer/sandbox: just emit muzzle flash/sound, server drives projectile sprite
           const rangedCfg = this.combatManager.getRangedConfig();
           if (rangedCfg) {
             this.events.emit("sfx:shoot_weapon", rangedCfg.id);
@@ -1222,7 +1199,7 @@ export class GameScene extends Phaser.Scene {
             this.events.emit("particle:muzzle", mx, my, aimAngle);
           }
         } else {
-          // Offline or test mode: use local predicted projectiles for dummy hits
+          // Offline fallback: use local predicted projectiles
           this.combatManager.tryShoot();
         }
       }
@@ -1335,11 +1312,6 @@ export class GameScene extends Phaser.Scene {
 
     // Update combat
     this.combatManager.update(time, delta);
-
-    // Update dummies
-    for (const dummy of this.dummies) {
-      dummy.update(time, delta);
-    }
 
     // Update minimap
     if (this.localPlayer) {
