@@ -398,15 +398,20 @@ export class VehicleSystem {
 
         sv.runOverCooldowns.set(targetId, VEHICLE_RUN_OVER_COOLDOWN_MS);
 
+        // Scale damage by current speed (fraction of max speed), minimum 10%
+        const speed = Math.sqrt(sv.vx * sv.vx + sv.vy * sv.vy);
+        const speedPct = Math.max(0.1, Math.min(1, speed / sv.config.maxSpeed));
+        const damage = Math.round(sv.config.runOverDamage * speedPct);
+
         if (this.combatSystem) {
-          this.combatSystem.applyDamage(targetId, target, sv.config.runOverDamage, attackerId, "vehicle");
+          this.combatSystem.applyDamage(targetId, target, damage, attackerId, "vehicle");
         }
 
         this.room.broadcast("vehicle_hit", {
           targetId,
           attackerId,
           vehicleName: sv.config.name,
-          damage: sv.config.runOverDamage,
+          damage,
         });
       }
     });
