@@ -12,11 +12,11 @@ export const ARENA_WIDTH = MAP_WIDTH_PX;
 export const ARENA_HEIGHT = MAP_HEIGHT_PX;
 
 // --- Player ---
-export const PLAYER_SPEED = 340;           // pixels per second (max speed)
+export const PLAYER_SPEED = 280;           // pixels per second (max speed)
 export const PLAYER_RADIUS = 16;           // collision half-size
 export const MAX_HEALTH = 100;
-export const PLAYER_ACCELERATION = 450;    // pixels per second² — ~0.75s to max speed
-export const PLAYER_FRICTION = 750;        // deceleration when no input — gradual stop
+export const PLAYER_ACCELERATION = 900;    // pixels per second² — snappy ramp-up
+export const PLAYER_FRICTION = 1500;       // deceleration when no input — quick stop
 
 // --- Projectile ---
 export const PROJECTILE_SPEED = 600;       // pixels per second
@@ -35,7 +35,7 @@ export const BOT_SESSION_PREFIX = "bot_";
 // --- Dash ---
 export const DASH_DISTANCE = 150;                // pixels traveled during dash
 export const DASH_DURATION_FRAMES = 10;          // frames the dash lasts
-export const DASH_COOLDOWN_TICKS = 10;           // ticks before dash can be used again
+export const DASH_COOLDOWN_TICKS = 100;           // ticks before dash can be used again
 
 // --- Dash Strike ---
 export const DASH_STRIKE_RANGE_MULT = 2;         // melee range multiplier

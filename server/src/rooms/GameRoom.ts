@@ -16,6 +16,7 @@ import {
   CHARACTER_COUNT,
   DASH_DISTANCE,
   DASH_DURATION_FRAMES,
+  DASH_COOLDOWN_TICKS,
   CONSUMABLE_USE_COOLDOWN_MS,
   DISMOUNT_PLAYER_FRICTION,
   PLAYER_SPEED,
@@ -46,6 +47,8 @@ export class GameRoom extends Room<GameStateSchema> {
 
   // Per-player dash state
   private dashStates = new Map<string, { timeLeft: number; angle: number }>();
+  // Per-player dash cooldown (ticks remaining)
+  private dashCooldowns = new Map<string, number>();
 
   // Per-player consumable use cooldown (ms remaining)
   private consumableCooldowns = new Map<string, number>();
@@ -208,6 +211,7 @@ export class GameRoom extends Room<GameStateSchema> {
     this.state.players.delete(client.sessionId);
     this.prevButtons.delete(client.sessionId);
     this.dashStates.delete(client.sessionId);
+    this.dashCooldowns.delete(client.sessionId);
     this.consumableCooldowns.delete(client.sessionId);
     this.dismountSliding.delete(client.sessionId);
     console.log(`Player left: ${client.sessionId}`);
@@ -272,7 +276,8 @@ export class GameRoom extends Room<GameStateSchema> {
         const prev = this.prevButtons.get(sessionId) ?? 0;
         const dashPressed = !!(input.buttons & Button.DASH) && !(prev & Button.DASH);
 
-        if (dashPressed && !this.dashStates.has(sessionId)) {
+        const dashCd = this.dashCooldowns.get(sessionId) ?? 0;
+        if (dashPressed && !this.dashStates.has(sessionId) && !this.vehicleSystem.isPlayerMounted(sessionId) && dashCd <= 0) {
           // Start dash — direction from movement input or aim angle
           const dashAngle = (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1)
             ? Math.atan2(dy, dx)
@@ -298,7 +303,15 @@ export class GameRoom extends Room<GameStateSchema> {
           dash.timeLeft -= dt;
           if (dash.timeLeft <= 0) {
             this.dashStates.delete(sessionId);
+            this.dashCooldowns.set(sessionId, DASH_COOLDOWN_TICKS);
             player.state = "idle";
+            // Notify the client so it can show cooldown indicator
+            const client = this.clients.find(c => c.sessionId === sessionId);
+            if (client) {
+              client.send("dash_cooldown", {
+                durationMs: DASH_COOLDOWN_TICKS * TICK_INTERVAL_MS,
+              });
+            }
           }
         } else if (this.vehicleSystem.isPlayerMounted(sessionId)) {
           // Mounted movement — W/S throttle, A/D steer, per-vehicle physics
@@ -425,6 +438,15 @@ export class GameRoom extends Room<GameStateSchema> {
       const [sid, buffType] = entry.split(":");
       this.broadcast("buff_expired", { sessionId: sid, buffType });
     }
+
+    // Decrement dash cooldowns (once per tick, not per input)
+    this.dashCooldowns.forEach((cd, sid) => {
+      if (cd > 0) {
+        this.dashCooldowns.set(sid, cd - 1);
+      } else {
+        this.dashCooldowns.delete(sid);
+      }
+    });
 
     // Decrement consumable cooldowns
     this.consumableCooldowns.forEach((cd, sid) => {

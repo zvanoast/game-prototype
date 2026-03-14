@@ -168,9 +168,15 @@ export class GameScene extends Phaser.Scene {
   // Interaction prompt
   private interactPrompt!: Phaser.GameObjects.Text;
 
+  // Dash cooldown visual
+  private dashCooldownGfx!: Phaser.GameObjects.Graphics;
+  private dashCooldownTimer = 0;    // ms remaining
+  private dashCooldownDuration = 0; // total ms for this cooldown
+
   // Vehicles
   private vehicleContainers = new Map<number, Phaser.GameObjects.Container>();
   private vehicleDurabilityBars = new Map<number, Phaser.GameObjects.Graphics>();
+  private vehicleTargets = new Map<number, { x: number; y: number; angle: number; riderId: string; destroyed: boolean; durabilityPct: number }>();
   private localMountedVehicleId = 0; // 0 = on foot
 
   // Server projectile count for debug
@@ -230,6 +236,7 @@ export class GameScene extends Phaser.Scene {
     this.pickupAmmo.clear();
     this.vehicleContainers.clear();
     this.vehicleDurabilityBars.clear();
+    this.vehicleTargets.clear();
     this.localMountedVehicleId = 0;
     this.hoveredPickupId = null;
 
@@ -329,6 +336,10 @@ export class GameScene extends Phaser.Scene {
     this.interactPrompt.setDepth(50);
     this.interactPrompt.setVisible(false);
 
+    // Dash cooldown ring (drawn around player's feet)
+    this.dashCooldownGfx = this.add.graphics();
+    this.dashCooldownGfx.setDepth(14);
+
     // Pickup tooltip (reusable, follows hovered pickup)
     this.pickupTooltipText = this.add.text(0, 0, "", {
       fontSize: "11px",
@@ -418,9 +429,9 @@ export class GameScene extends Phaser.Scene {
     body.setCollideWorldBounds(false);
     body.moves = false; // We handle all movement — prevent Phaser from applying velocity
 
-    // Camera follow with deadzone
-    this.cameras.main.startFollow(this.localPlayer, true, 0.08, 0.08);
-    this.cameras.main.setDeadzone(40, 40);
+    // Camera follow — lerp is updated dynamically in update() based on speed
+    this.cameras.main.startFollow(this.localPlayer, true, 0.12, 0.12);
+    this.cameras.main.setDeadzone(20, 20);
 
     // Init combat manager with player
     this.combatManager.init(
@@ -783,40 +794,20 @@ export class GameScene extends Phaser.Scene {
         durBar.setDepth(15);
         this.vehicleDurabilityBars.set(vehicle.id, durBar);
 
+        // Store initial target
+        this.vehicleTargets.set(vehicle.id, {
+          x: vehicle.x, y: vehicle.y, angle: vehicle.angle,
+          riderId: vehicle.riderId, destroyed: vehicle.destroyed,
+          durabilityPct: vehicle.durabilityPct,
+        });
+
         vehicle.onChange(() => {
-          const c = this.vehicleContainers.get(vehicle.id);
-          if (!c) return;
-          c.setPosition(vehicle.x, vehicle.y);
-
-          // Rotate only the sprite, not the label
-          sprite.setRotation(vehicle.angle);
-
-          // Hide if destroyed
-          if (vehicle.destroyed) {
-            c.setAlpha(0.2);
-          } else if (vehicle.riderId) {
-            c.setAlpha(0.7);
-          } else {
-            c.setAlpha(1);
-          }
-
-          // Update durability bar
-          const bar = this.vehicleDurabilityBars.get(vehicle.id);
-          if (bar) {
-            bar.clear();
-            if (vehicle.riderId && !vehicle.destroyed) {
-              const barW = 32;
-              const barH = 3;
-              const barX = vehicle.x - barW / 2;
-              const barY = vehicle.y + 22;
-              bar.fillStyle(0x000000, 0.6);
-              bar.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
-              const pct = Math.max(0, vehicle.durabilityPct);
-              const color = pct > 0.5 ? 0x44ff44 : pct > 0.25 ? 0xffff00 : 0xff4444;
-              bar.fillStyle(color, 0.9);
-              bar.fillRect(barX, barY, barW * pct, barH);
-            }
-          }
+          // Update target — actual interpolation happens in update()
+          this.vehicleTargets.set(vehicle.id, {
+            x: vehicle.x, y: vehicle.y, angle: vehicle.angle,
+            riderId: vehicle.riderId, destroyed: vehicle.destroyed,
+            durabilityPct: vehicle.durabilityPct,
+          });
         });
       });
 
@@ -831,6 +822,7 @@ export class GameScene extends Phaser.Scene {
           bar.destroy();
           this.vehicleDurabilityBars.delete(vehicle.id);
         }
+        this.vehicleTargets.delete(vehicle.id);
       });
 
       // Listen for server projectile state changes
@@ -1034,6 +1026,7 @@ export class GameScene extends Phaser.Scene {
       room.onMessage("vehicle_mount", (data: any) => {
         if (data.sessionId === room.sessionId) {
           this.localMountedVehicleId = data.vehicleSchemaId;
+          this.stateMachine.setMounted(true);
         }
         this.events.emit("sfx:vehicle_mount");
       });
@@ -1041,6 +1034,7 @@ export class GameScene extends Phaser.Scene {
       room.onMessage("vehicle_dismount", (data: any) => {
         if (data.sessionId === room.sessionId) {
           this.localMountedVehicleId = 0;
+          this.stateMachine.setMounted(false);
         }
         this.events.emit("sfx:vehicle_dismount");
       });
@@ -1069,6 +1063,11 @@ export class GameScene extends Phaser.Scene {
 
       room.onMessage("weapon_depleted", (_data: any) => {
         // Ranged weapon ammo depleted — UI will update via state sync
+      });
+
+      room.onMessage("dash_cooldown", (data: any) => {
+        this.dashCooldownDuration = data.durationMs;
+        this.dashCooldownTimer = data.durationMs;
       });
 
       room.onLeave((code: number) => {
@@ -1182,10 +1181,9 @@ export class GameScene extends Phaser.Scene {
       // Rotate player toward mouse, or lock to vehicle heading when mounted
       if (this.localMountedVehicleId > 0) {
         // Face the vehicle's heading so the player knows which way W goes
-        const vContainer = this.vehicleContainers.get(this.localMountedVehicleId);
-        if (vContainer) {
-          const vSprite = vContainer.getAt(0) as Phaser.GameObjects.Sprite;
-          if (vSprite) this.localPlayer.setRotation(vSprite.rotation);
+        const vTarget = this.vehicleTargets.get(this.localMountedVehicleId);
+        if (vTarget) {
+          this.localPlayer.setRotation(vTarget.angle);
         }
       } else {
         this.localPlayer.setRotation(aimAngle);
@@ -1245,6 +1243,17 @@ export class GameScene extends Phaser.Scene {
 
         // Dash trail particles
         this.particles.dashTrail(this.localPlayer.x, this.localPlayer.y);
+      } else if (this.localMountedVehicleId > 0) {
+        // Mounted: interpolate toward vehicle position from server.
+        // Vehicle physics run server-side only — client smoothly follows.
+        const vc = this.vehicleContainers.get(this.localMountedVehicleId);
+        if (vc) {
+          this.localPlayer.x = Phaser.Math.Linear(this.localPlayer.x, vc.x, 0.4);
+          this.localPlayer.y = Phaser.Math.Linear(this.localPlayer.y, vc.y, 0.4);
+        }
+        this.velocityX = 0;
+        this.velocityY = 0;
+        this.localPlayer.setAlpha(1);
       } else {
         // Normal acceleration movement (blocked during state lock except dash)
         if (!this.stateMachine.isLocked()) {
@@ -1260,7 +1269,7 @@ export class GameScene extends Phaser.Scene {
       // Animate local player
       if (dashState) {
         this.localPlayer.play("player_walk", true);
-      } else if (dx !== 0 || dy !== 0) {
+      } else if (this.localMountedVehicleId > 0 || dx !== 0 || dy !== 0) {
         this.localPlayer.play("player_walk", true);
       } else {
         this.localPlayer.play("player_idle", true);
@@ -1269,6 +1278,37 @@ export class GameScene extends Phaser.Scene {
       // Frozen but alive — show idle animation
       this.localPlayer.play("player_idle", true);
       this.localPlayer.setAlpha(1);
+    }
+
+    // Dynamic camera lerp — tighten up at high speed so it doesn't lag behind
+    if (this.localPlayer && !this.spectating) {
+      const speed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
+      const mounted = this.localMountedVehicleId > 0;
+      // Base lerp 0.12 for walking, ramps up to 0.5 for fast vehicles
+      const lerpVal = mounted ? 0.45 : Math.min(0.12 + speed / 2000, 0.35);
+      this.cameras.main.setFollowOffset(0, 0);
+      this.cameras.main.followOffset.set(0, 0);
+      (this.cameras.main as any).lerp.set(lerpVal, lerpVal);
+    }
+
+    // Dash cooldown ring around player's feet
+    this.dashCooldownGfx.clear();
+    if (this.dashCooldownTimer > 0 && this.localPlayer && !isDead) {
+      this.dashCooldownTimer = Math.max(0, this.dashCooldownTimer - delta);
+      const pct = 1 - this.dashCooldownTimer / this.dashCooldownDuration;
+      const radius = PLAYER_RADIUS + 4;
+      const px = this.localPlayer.x;
+      const py = this.localPlayer.y;
+      // Background ring (dim)
+      this.dashCooldownGfx.lineStyle(2, 0xffffff, 0.15);
+      this.dashCooldownGfx.strokeCircle(px, py, radius);
+      // Filled arc showing progress
+      if (pct < 1) {
+        this.dashCooldownGfx.lineStyle(2, 0x66ccff, 0.7);
+        this.dashCooldownGfx.beginPath();
+        this.dashCooldownGfx.arc(px, py, radius, -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2, false);
+        this.dashCooldownGfx.strokePath();
+      }
     }
 
     // Interpolate remote players + update health bars + rotation + death
@@ -1313,6 +1353,55 @@ export class GameScene extends Phaser.Scene {
           sprite.setTint(0xcc88ff); // purple tint for shield
         } else {
           sprite.clearTint(); // Kenney sprites have their own colors
+        }
+      }
+    });
+
+    // Interpolate vehicle positions + update visuals
+    this.vehicleContainers.forEach((container, vehicleId) => {
+      const target = this.vehicleTargets.get(vehicleId);
+      if (!target) return;
+
+      // Faster lerp for the vehicle the local player is riding (matches player lerp)
+      const isLocal = vehicleId === this.localMountedVehicleId;
+      const posLerp = isLocal ? 0.4 : 0.25;
+
+      container.x = Phaser.Math.Linear(container.x, target.x, posLerp);
+      container.y = Phaser.Math.Linear(container.y, target.y, posLerp);
+
+      // Rotate the sprite (first child), not the label.
+      // Vehicle textures are drawn pointing up, so add π/2 to align with heading.
+      const sprite = container.getAt(0) as Phaser.GameObjects.Sprite;
+      if (sprite) {
+        const targetAngle = target.angle + Math.PI / 2;
+        const angleDiff = Phaser.Math.Angle.Wrap(targetAngle - sprite.rotation);
+        sprite.rotation += angleDiff * 0.3;
+      }
+
+      // Alpha based on state
+      if (target.destroyed) {
+        container.setAlpha(0.2);
+      } else if (target.riderId) {
+        container.setAlpha(0.7);
+      } else {
+        container.setAlpha(1);
+      }
+
+      // Update durability bar
+      const bar = this.vehicleDurabilityBars.get(vehicleId);
+      if (bar) {
+        bar.clear();
+        if (target.riderId && !target.destroyed) {
+          const barW = 32;
+          const barH = 3;
+          const barX = container.x - barW / 2;
+          const barY = container.y + 22;
+          bar.fillStyle(0x000000, 0.6);
+          bar.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+          const pct = Math.max(0, target.durabilityPct);
+          const color = pct > 0.5 ? 0x44ff44 : pct > 0.25 ? 0xffff00 : 0xff4444;
+          bar.fillStyle(color, 0.9);
+          bar.fillRect(barX, barY, barW * pct, barH);
         }
       }
     });
@@ -1747,8 +1836,8 @@ export class GameScene extends Phaser.Scene {
     }
     if (this.localPlayer) {
       this.localPlayer.setAlpha(1);
-      this.cameras.main.startFollow(this.localPlayer, true, 0.08, 0.08);
-      this.cameras.main.setDeadzone(40, 40);
+      this.cameras.main.startFollow(this.localPlayer, true, 0.12, 0.12);
+      this.cameras.main.setDeadzone(20, 20);
     }
   }
 
@@ -1787,13 +1876,28 @@ export class GameScene extends Phaser.Scene {
       (input) => input.seq > lastProcessed
     );
 
-    // During a dash, skip input replay — dash is a fixed trajectory,
-    // so trust the server position directly to avoid snap-back
+    // During a dash, the trajectory is deterministic (fixed direction + speed),
+    // so client prediction is highly accurate. Instead of snapping to server
+    // position (which causes 20Hz stutter), trust client prediction and only
+    // blend gently toward server to correct any drift.
     if (this.stateMachine.isDashing() || serverPlayer.state === "dashing") {
-      this.localPlayer.x = serverPlayer.x;
-      this.localPlayer.y = serverPlayer.y;
-      this.velocityX = 0;
-      this.velocityY = 0;
+      const dx = serverPlayer.x - this.localPlayer.x;
+      const dy = serverPlayer.y - this.localPlayer.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      // Only correct if drift is significant (> 2px), and blend gently
+      if (dist > 2) {
+        const blend = dist > 50 ? 0.5 : 0.15;
+        this.localPlayer.x += dx * blend;
+        this.localPlayer.y += dy * blend;
+      }
+      this.pendingInputs = [];
+      return;
+    }
+
+    // When mounted, vehicle position is server-authoritative — no input replay.
+    // The update() loop interpolates toward the vehicle container each frame,
+    // so we just let that handle it and don't snap here.
+    if (this.localMountedVehicleId > 0) {
       this.pendingInputs = [];
       return;
     }
@@ -1818,7 +1922,18 @@ export class GameScene extends Phaser.Scene {
     this.velocityX = vx;
     this.velocityY = vy;
 
-    this.localPlayer.x = x;
-    this.localPlayer.y = y;
+    // Smooth small corrections instead of hard-snapping (reduces jitter at high speed)
+    const errX = x - this.localPlayer.x;
+    const errY = y - this.localPlayer.y;
+    const errDist = Math.sqrt(errX * errX + errY * errY);
+    if (errDist > 100) {
+      // Large desync — snap immediately
+      this.localPlayer.x = x;
+      this.localPlayer.y = y;
+    } else if (errDist > 0.5) {
+      // Small correction — blend toward target
+      this.localPlayer.x += errX * 0.3;
+      this.localPlayer.y += errY * 0.3;
+    }
   }
 }
