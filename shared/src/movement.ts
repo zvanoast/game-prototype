@@ -33,7 +33,8 @@ export function applyMovement(
   dx: number,
   dy: number,
   dt: number,
-  speedMultiplier = 1.0
+  speedMultiplier = 1.0,
+  frictionOverride?: number,
 ): MovementResult {
   // Normalize input direction
   let ix = dx;
@@ -56,7 +57,7 @@ export function applyMovement(
     // Apply friction (decelerate to zero)
     const speed = Math.sqrt(newVx * newVx + newVy * newVy);
     if (speed > 0) {
-      const frictionAmount = PLAYER_FRICTION * dt;
+      const frictionAmount = (frictionOverride ?? PLAYER_FRICTION) * dt;
       if (frictionAmount >= speed) {
         newVx = 0;
         newVy = 0;
@@ -68,10 +69,13 @@ export function applyMovement(
     }
   }
 
-  // Clamp to max speed (with multiplier)
+  // Clamp to max speed only when actively accelerating (has input).
+  // When coasting (no input), let friction naturally bring speed down — this
+  // allows momentum from vehicle dismounts or knockback to decay smoothly
+  // instead of being instantly capped.
   const maxSpeed = PLAYER_SPEED * speedMultiplier;
   const currentSpeed = Math.sqrt(newVx * newVx + newVy * newVy);
-  if (currentSpeed > maxSpeed) {
+  if (inputMag > 0 && currentSpeed > maxSpeed) {
     const scale = maxSpeed / currentSpeed;
     newVx *= scale;
     newVy *= scale;

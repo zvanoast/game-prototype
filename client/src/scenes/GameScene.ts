@@ -1179,8 +1179,17 @@ export class GameScene extends Phaser.Scene {
 
     // Aim + combat (allowed when alive, even if movement frozen)
     if (this.localPlayer && !isDead) {
-      // Rotate player toward mouse
-      this.localPlayer.setRotation(aimAngle);
+      // Rotate player toward mouse, or lock to vehicle heading when mounted
+      if (this.localMountedVehicleId > 0) {
+        // Face the vehicle's heading so the player knows which way W goes
+        const vContainer = this.vehicleContainers.get(this.localMountedVehicleId);
+        if (vContainer) {
+          const vSprite = vContainer.getAt(0) as Phaser.GameObjects.Sprite;
+          if (vSprite) this.localPlayer.setRotation(vSprite.rotation);
+        }
+      } else {
+        this.localPlayer.setRotation(aimAngle);
+      }
 
       // Combat aim
       this.combatManager.setAimAngle(aimAngle);

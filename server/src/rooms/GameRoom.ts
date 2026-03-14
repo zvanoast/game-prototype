@@ -17,6 +17,8 @@ import {
   DASH_DISTANCE,
   DASH_DURATION_FRAMES,
   CONSUMABLE_USE_COOLDOWN_MS,
+  DISMOUNT_PLAYER_FRICTION,
+  PLAYER_SPEED,
   buildWallRects,
   resolveWallCollisions,
   applyMovement,
@@ -47,6 +49,9 @@ export class GameRoom extends Room<GameStateSchema> {
 
   // Per-player consumable use cooldown (ms remaining)
   private consumableCooldowns = new Map<string, number>();
+
+  // Players currently sliding from a vehicle dismount (use reduced friction)
+  private dismountSliding = new Set<string>();
 
   // Taken character indices (enforces unique character per room)
   // Public so the REST API can read it
@@ -97,6 +102,7 @@ export class GameRoom extends Room<GameStateSchema> {
     this.matchSystem.setBuffSystem(this.buffSystem);
     this.matchSystem.setVehicleSystem(this.vehicleSystem);
     this.vehicleSystem.setCombatSystem(this.combatSystem);
+    this.vehicleSystem.setWallData(this.wallRects, resolveWallCollisions);
 
     // Sandbox mode: skip match lifecycle, spawn all items + vehicles + bots
     if (options?.sandbox) {
@@ -203,6 +209,7 @@ export class GameRoom extends Room<GameStateSchema> {
     this.prevButtons.delete(client.sessionId);
     this.dashStates.delete(client.sessionId);
     this.consumableCooldowns.delete(client.sessionId);
+    this.dismountSliding.delete(client.sessionId);
     console.log(`Player left: ${client.sessionId}`);
   }
 
@@ -294,27 +301,31 @@ export class GameRoom extends Room<GameStateSchema> {
             player.state = "idle";
           }
         } else if (this.vehicleSystem.isPlayerMounted(sessionId)) {
-          // Mounted movement — vehicle speed, no acceleration model, just direct velocity
-          const vSpeed = this.vehicleSystem.getMountedSpeed(sessionId);
-          const mag = Math.sqrt(dx * dx + dy * dy);
-          const ndx = mag > 0.1 ? dx / mag : 0;
-          const ndy = mag > 0.1 ? dy / mag : 0;
-          const newX = player.x + ndx * vSpeed * dt;
-          const newY = player.y + ndy * vSpeed * dt;
-          const resolved = resolveWallCollisions(newX, newY, PLAYER_RADIUS, this.wallRects);
-          player.x = resolved.x;
-          player.y = resolved.y;
-          player.vx = 0;
-          player.vy = 0;
-          player.state = mag > 0.1 ? "moving" : "idle";
+          // Mounted movement — W/S throttle, A/D steer, per-vehicle physics
+          this.vehicleSystem.applyVehicleMovement(
+            sessionId, dx, dy, input.aimAngle, dt,
+            this.wallRects, resolveWallCollisions, PLAYER_RADIUS,
+          );
         } else {
+          // End dismount slide if the player gives movement input
+          const mag = Math.sqrt(dx * dx + dy * dy);
+          if (this.dismountSliding.has(sessionId)) {
+            const spd = Math.sqrt(player.vx * player.vx + player.vy * player.vy);
+            if (mag > 0.1 || spd <= PLAYER_SPEED) {
+              this.dismountSliding.delete(sessionId);
+            }
+          }
+
           // Normal acceleration-based movement (with speed buff)
+          // Use reduced friction while dismount-sliding
           const speedMult = this.buffSystem.getSpeedMultiplier(sessionId);
+          const friction = this.dismountSliding.has(sessionId) ? DISMOUNT_PLAYER_FRICTION : undefined;
           const moveResult = applyMovement(
             player.x, player.y,
             player.vx, player.vy,
             dx, dy, dt,
-            speedMult
+            speedMult,
+            friction,
           );
 
           // Shared wall collision resolution
@@ -338,12 +349,14 @@ export class GameRoom extends Room<GameStateSchema> {
           player.vx = finalVx;
           player.vy = finalVy;
 
-          const mag = Math.sqrt(dx * dx + dy * dy);
           player.state = mag > 0.1 ? "moving" : "idle";
         }
       }
 
-      player.angle = input.aimAngle;
+      // When mounted, angle is set by vehicle heading (in applyVehicleMovement)
+      if (!this.vehicleSystem.isPlayerMounted(sessionId)) {
+        player.angle = input.aimAngle;
+      }
 
       // Track last processed input for client reconciliation
       player.lastProcessedInput = input.seq;
@@ -356,6 +369,11 @@ export class GameRoom extends Room<GameStateSchema> {
           // Priority: dismount > mount vehicle > open locker
           if (this.vehicleSystem.isPlayerMounted(sessionId)) {
             this.vehicleSystem.processDismount(sessionId);
+            // Player now has momentum from the vehicle — use reduced friction
+            const spd = Math.sqrt(player.vx * player.vx + player.vy * player.vy);
+            if (spd > PLAYER_SPEED) {
+              this.dismountSliding.add(sessionId);
+            }
           } else if (!this.vehicleSystem.processMount(sessionId)) {
             this.lootSystem.processInteract(sessionId);
           }

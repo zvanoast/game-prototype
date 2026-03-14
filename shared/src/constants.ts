@@ -91,6 +91,9 @@ export const VEHICLE_SPAWN_MIN = 3;
 export const VEHICLE_SPAWN_MAX = 5;
 export const VEHICLE_RUN_OVER_COOLDOWN_MS = 500;
 export const VEHICLE_RUN_OVER_RADIUS = 24;
+export const DISMOUNT_PLAYER_SPEED_FACTOR = 0.9;  // player gets 90% of vehicle speed on dismount
+export const DISMOUNT_PLAYER_SPEED_CAP = 480;    // cap so Jet Ski doesn't launch you into orbit
+export const DISMOUNT_PLAYER_FRICTION = 200;     // low friction while sliding from dismount (vs normal 750)
 
 // --- Network ---
 export const SERVER_PORT = 3001;
