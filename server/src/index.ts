@@ -27,7 +27,18 @@ app.use("/monitor", monitor());
 
 // In production, serve the built client files
 const clientDist = path.resolve(__dirname, "../../client/dist");
-app.use(express.static(clientDist));
+
+// Hashed assets (js/css) can be cached forever; index.html must not be cached
+app.use(express.static(clientDist, {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith(".html")) {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    } else {
+      // Vite adds content hashes to JS/CSS filenames — safe to cache long
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    }
+  },
+}));
 
 // Health check
 app.get("/api/health", (_req, res) => {
@@ -64,6 +75,7 @@ app.get("/api/taken-characters", async (_req, res) => {
 
 // SPA fallback — serve index.html for any non-API/non-WS route
 app.get("*", (_req, res) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   res.sendFile(path.join(clientDist, "index.html"));
 });
 
