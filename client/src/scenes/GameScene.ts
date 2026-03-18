@@ -15,6 +15,7 @@ import { ScreenShake } from "../systems/ScreenShake";
 import { HitStop } from "../systems/HitStop";
 import { ParticleManager } from "../systems/ParticleManager";
 import { SoundManager } from "../systems/SoundManager";
+import { RespawnOverlay } from "../ui/RespawnOverlay";
 import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
@@ -173,6 +174,9 @@ export class GameScene extends Phaser.Scene {
   private dashCooldownTimer = 0;    // ms remaining
   private dashCooldownDuration = 0; // total ms for this cooldown
 
+  // Respawn overlay (sandbox item respawns)
+  private respawnOverlay!: RespawnOverlay;
+
   // Vehicles
   private vehicleContainers = new Map<number, Phaser.GameObjects.Container>();
   private vehicleDurabilityBars = new Map<number, Phaser.GameObjects.Graphics>();
@@ -188,11 +192,13 @@ export class GameScene extends Phaser.Scene {
 
   // Test mode (offline, skips server connection)
   private testMode = false;
+  private botPersonas: string[] = [];
 
-  init(data: { nickname?: string; testMode?: boolean; characterIndex?: number } = {}) {
+  init(data: { nickname?: string; testMode?: boolean; characterIndex?: number; botPersonas?: string[] } = {}) {
     this.nickname = data.nickname ?? "";
     this.testMode = data.testMode ?? false;
     this.characterIndex = data.characterIndex ?? 0;
+    this.botPersonas = data.botPersonas ?? [];
   }
 
   create() {
@@ -232,6 +238,7 @@ export class GameScene extends Phaser.Scene {
     this.serverProjectileTrailCleanups.clear();
     this.lockerSprites.clear();
     this.pickupSprites.clear();
+    this.respawnOverlay?.clear();
     this.pickupWeaponIds.clear();
     this.pickupAmmo.clear();
     this.vehicleContainers.clear();
@@ -339,6 +346,9 @@ export class GameScene extends Phaser.Scene {
     // Dash cooldown ring (drawn around player's feet)
     this.dashCooldownGfx = this.add.graphics();
     this.dashCooldownGfx.setDepth(14);
+
+    // Respawn overlay for sandbox item respawns
+    this.respawnOverlay = new RespawnOverlay(this);
 
     // Pickup tooltip (reusable, follows hovered pickup)
     this.pickupTooltipText = this.add.text(0, 0, "", {
@@ -483,7 +493,12 @@ export class GameScene extends Phaser.Scene {
       nickname: this.nickname,
       characterIndex: this.characterIndex,
     };
-    if (this.testMode) options.sandbox = true;
+    if (this.testMode) {
+      options.sandbox = true;
+      if (this.botPersonas.length > 0) {
+        options.botPersonas = this.botPersonas;
+      }
+    }
 
     try {
       const room = await this.network.connect(options, roomType);
@@ -975,6 +990,16 @@ export class GameScene extends Phaser.Scene {
         this.events.emit("sfx:locker_open");
       });
 
+      room.onMessage("respawn_start", (data: any) => {
+        if (data.type === "pickup") {
+          this.respawnOverlay.addTimer(
+            `pickup_${data.x}_${data.y}`,
+            data.x, data.y,
+            data.durationMs, 14, 0x66ccff,
+          );
+        }
+      });
+
       room.onMessage("weapon_pickup", (data: any) => {
         if (data.sessionId === room.sessionId) {
           // Particle burst on local player
@@ -1310,6 +1335,9 @@ export class GameScene extends Phaser.Scene {
         this.dashCooldownGfx.strokePath();
       }
     }
+
+    // Respawn overlay timers (sandbox locker/pickup respawns)
+    this.respawnOverlay.update(delta);
 
     // Interpolate remote players + update health bars + rotation + death
     this.remotePlayers.forEach((sprite, sessionId) => {

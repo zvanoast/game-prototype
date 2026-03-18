@@ -41,6 +41,7 @@ export class GameRoom extends Room<GameStateSchema> {
   private buffSystem!: BuffSystem;
   private matchSystem!: MatchSystem;
   private vehicleSystem!: VehicleSystem;
+  private botManager: BotManager | null = null;
 
   // Track previous buttons per player for edge detection
   private prevButtons = new Map<string, number>();
@@ -64,7 +65,7 @@ export class GameRoom extends Room<GameStateSchema> {
   private static DASH_DURATION_S = DASH_DURATION_FRAMES / 60;
   private static DASH_SPEED = DASH_DISTANCE / (DASH_DURATION_FRAMES / 60);
 
-  onCreate(options?: { sandbox?: boolean }) {
+  onCreate(options?: { sandbox?: boolean; botPersonas?: string[] }) {
     this.setState(new GameStateSchema());
     this.maxClients = MAX_PLAYERS_PER_ROOM;
 
@@ -112,13 +113,15 @@ export class GameRoom extends Room<GameStateSchema> {
       this.matchSystem.enableSandbox();
       this.lootSystem.spawnAllItems();
       this.vehicleSystem.spawnAllVehicles();
-      const botManager = new BotManager(this.state, this.takenCharacters, () => this.findSafeSpawn());
-      botManager.spawnBots(
-        SANDBOX_BOT_COUNT,
+      this.lootSystem.enableSandbox();
+      this.botManager = new BotManager(this.state, this.takenCharacters, () => this.findSafeSpawn(), this.wallRects);
+      this.botManager.spawnBots(
         this.combatSystem,
         this.lootSystem,
         this.buffSystem,
-        this.matchSystem
+        this.matchSystem,
+        options?.botPersonas,
+        SANDBOX_BOT_COUNT,
       );
       console.log("Sandbox mode enabled");
     } else {
@@ -251,6 +254,9 @@ export class GameRoom extends Room<GameStateSchema> {
     const tick = this.state.tick;
     const phase = this.matchSystem.getPhase();
     const frozen = phase === "waiting" || phase === "countdown" || phase === "ended";
+
+    // Tick bot AI — bots push inputs into the same queue as human players
+    this.botManager?.tickBots(tick, this.inputQueue, phase);
 
     // Process all queued inputs
     for (const { sessionId, input } of this.inputQueue) {
@@ -420,8 +426,9 @@ export class GameRoom extends Room<GameStateSchema> {
     // Clear queue
     this.inputQueue.length = 0;
 
-    // Tick pickups (auto-collect)
+    // Tick pickups (auto-collect) and sandbox respawns
     this.lootSystem.tickPickups(tick);
+    this.lootSystem.tickRespawns(TICK_INTERVAL_MS);
 
     // Tick vehicles (durability, run-over)
     this.vehicleSystem.tickVehicles(TICK_INTERVAL_MS);

@@ -57,6 +57,7 @@ storage-wars/
 ## Architecture Principles
 
 1. **Server is authoritative.** The server owns all game state. Clients send inputs, never positions. The server simulates physics and combat, then broadcasts state.
+6. **Bot AI uses Utility AI.** Bots score all actions each tick and execute the highest-scoring one. They produce `InputPayload` objects pushed into the same `inputQueue` as human players — no special codepaths. Persona configs (aggression, accuracy, preferred range, etc.) weight the action scores. Files live in `server/src/systems/bot/`.
 2. **Client-side prediction.** The client immediately applies local player inputs for responsiveness, then reconciles when server state arrives. Other players are interpolated.
 3. **Fixed tick rate.** The server runs game simulation at a fixed tick rate (20 ticks/sec for prototype). Client renders at 60fps and interpolates between server states.
 4. **Input buffer pattern.** Raw inputs are recorded into a circular buffer each frame. The combo detection system reads from this buffer to match patterns. This runs on BOTH client (for instant feedback) and server (for validation).
@@ -79,7 +80,7 @@ storage-wars/
 
 ## Current Phase
 
-Character selection, production deployment, and test environment deployment complete. 9 phases of gameplay implemented. See `claude-progress.md` for full history.
+Character selection, production deployment, test environment deployment, and bot AI complete. 9 phases of gameplay + bot AI implemented. See `claude-progress.md` for full history.
 
 ## Development Commands
 

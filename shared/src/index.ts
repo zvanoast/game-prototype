@@ -8,3 +8,4 @@ export * from "./weapons.js";
 export * from "./consumables.js";
 export * from "./locker-data.js";
 export * from "./vehicles.js";
+export * from "./bot-personas.js";

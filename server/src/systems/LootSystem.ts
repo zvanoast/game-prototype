@@ -9,6 +9,7 @@ import {
   ACTIVE_LOCKERS_MIN,
   ACTIVE_LOCKERS_MAX,
   CONSUMABLE_SPAWN_CHANCE,
+  SANDBOX_RESPAWN_TIME_MS,
 } from "shared";
 import { WeaponId, ConsumableId } from "shared";
 import type { WeaponConfig } from "shared";
@@ -33,6 +34,16 @@ interface PlayerEquipment {
 /** Ticks a pickup must exist before it can be collected */
 const PICKUP_IMMUNITY_TICKS = TICK_RATE; // 1 second
 
+/** Queued pickup respawn (sandbox mode) */
+interface PendingPickupRespawn {
+  x: number;
+  y: number;
+  weaponId: string;
+  consumableId: string;
+  ammo: number;
+  msRemaining: number;
+}
+
 export class LootSystem {
   private room: Room<GameStateSchema>;
   private state: GameStateSchema;
@@ -43,9 +54,19 @@ export class LootSystem {
   // Track spawn tick per pickup ID so we can enforce immunity
   private pickupSpawnTick = new Map<number, number>();
 
+  // Sandbox respawn system
+  private sandboxMode = false;
+  private sandboxPickupPositions = new Map<number, { x: number; y: number; weaponId: string; consumableId: string }>(); // pickupId → original spawn data
+  private pickupRespawnQueue: PendingPickupRespawn[] = [];
+
   constructor(room: Room<GameStateSchema>, state: GameStateSchema) {
     this.room = room;
     this.state = state;
+  }
+
+  /** Enable sandbox respawn timers */
+  enableSandbox() {
+    this.sandboxMode = true;
   }
 
   /** Populate lockers from a random subset of LOCKER_SLOTS */
@@ -177,6 +198,9 @@ export class LootSystem {
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist > PICKUP_INTERACT_RANGE) return;
 
+    // Check if this is a sandbox test item (should respawn)
+    const sandboxData = this.sandboxPickupPositions.get(pickup.id);
+
     // Handle consumable pickup
     if (pickup.consumableId) {
       const config = getConsumableConfig(pickup.consumableId);
@@ -184,10 +208,16 @@ export class LootSystem {
 
       this.equipConsumable(sessionId, pickup.consumableId);
       this.pickupSpawnTick.delete(pickup.id);
+      this.sandboxPickupPositions.delete(pickup.id);
 
       // Remove from array
       const arr = this.state.pickups as any;
       arr.splice(pickupIdx, 1);
+
+      // Queue sandbox respawn only for test items
+      if (sandboxData) {
+        this.queuePickupRespawn(sandboxData.x, sandboxData.y, sandboxData.weaponId, sandboxData.consumableId);
+      }
       return;
     }
 
@@ -197,10 +227,16 @@ export class LootSystem {
 
     this.equipWeapon(sessionId, weaponConfig, pickup.ammo);
     this.pickupSpawnTick.delete(pickup.id);
+    this.sandboxPickupPositions.delete(pickup.id);
 
     // Remove from array
     const arr = this.state.pickups as any;
     arr.splice(pickupIdx, 1);
+
+    // Queue sandbox respawn only for test items
+    if (sandboxData) {
+      this.queuePickupRespawn(sandboxData.x, sandboxData.y, sandboxData.weaponId, sandboxData.consumableId);
+    }
   }
 
   /** Equip a consumable: fill slot1 → slot2 → drop slot1 to make room */
@@ -364,6 +400,15 @@ export class LootSystem {
     }
   }
 
+  /** Spawn a pickup and register it as a sandbox test item (will respawn when collected) */
+  private spawnSandboxPickup(x: number, y: number, weaponId: string, consumableId: string) {
+    const ammo = weaponId ? (getWeaponConfig(weaponId)?.maxAmmo ?? -1) : -1;
+    this.spawnPickup(x, y, weaponId, consumableId, ammo);
+    // Register the most recently spawned pickup as a sandbox item
+    const lastId = this.nextPickupId - 1;
+    this.sandboxPickupPositions.set(lastId, { x, y, weaponId, consumableId });
+  }
+
   /** Create a pickup on the ground */
   private spawnPickup(x: number, y: number, weaponId: string, consumableId: string, ammo = -1) {
     const pickup = new PickupSchema();
@@ -455,14 +500,14 @@ export class LootSystem {
     const meleeX = centerX - colSpacing;
     const meleeStartY = groupCenterY - ((meleeIds.length - 1) * rowSpacing) / 2;
     for (let i = 0; i < meleeIds.length; i++) {
-      this.spawnPickup(meleeX, meleeStartY + i * rowSpacing, meleeIds[i], "");
+      this.spawnSandboxPickup(meleeX, meleeStartY + i * rowSpacing, meleeIds[i], "");
     }
 
     // Ranged column (center)
     const rangedX = centerX;
     const rangedStartY = groupCenterY - ((rangedIds.length - 1) * rowSpacing) / 2;
     for (let i = 0; i < rangedIds.length; i++) {
-      this.spawnPickup(rangedX, rangedStartY + i * rowSpacing, rangedIds[i], "");
+      this.spawnSandboxPickup(rangedX, rangedStartY + i * rowSpacing, rangedIds[i], "");
     }
 
     // Consumables column (right)
@@ -470,7 +515,36 @@ export class LootSystem {
     const consumableX = centerX + colSpacing;
     const consumableStartY = groupCenterY - ((cCount - 1) * rowSpacing) / 2;
     for (let i = 0; i < cCount; i++) {
-      this.spawnPickup(consumableX, consumableStartY + i * rowSpacing, "", LOOTABLE_CONSUMABLE_IDS[i]);
+      this.spawnSandboxPickup(consumableX, consumableStartY + i * rowSpacing, "", LOOTABLE_CONSUMABLE_IDS[i]);
+    }
+  }
+
+  /** Queue a sandbox test pickup to respawn at its original position */
+  private queuePickupRespawn(x: number, y: number, weaponId: string, consumableId: string) {
+    this.pickupRespawnQueue.push({
+      x, y, weaponId, consumableId,
+      ammo: -1, // always respawn with full ammo
+      msRemaining: SANDBOX_RESPAWN_TIME_MS,
+    });
+    this.room.broadcast("respawn_start", {
+      type: "pickup",
+      x, y,
+      durationMs: SANDBOX_RESPAWN_TIME_MS,
+    });
+  }
+
+  /** Tick sandbox pickup respawn timers. Call each server tick with TICK_INTERVAL_MS. */
+  tickRespawns(deltaMs: number) {
+    if (!this.sandboxMode || this.pickupRespawnQueue.length === 0) return;
+
+    for (let i = this.pickupRespawnQueue.length - 1; i >= 0; i--) {
+      const entry = this.pickupRespawnQueue[i];
+      entry.msRemaining -= deltaMs;
+      if (entry.msRemaining <= 0) {
+        // Respawn at original position with full ammo, and register as sandbox item
+        this.spawnSandboxPickup(entry.x, entry.y, entry.weaponId, entry.consumableId);
+        this.pickupRespawnQueue.splice(i, 1);
+      }
     }
   }
 
