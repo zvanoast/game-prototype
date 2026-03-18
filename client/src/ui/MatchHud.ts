@@ -20,6 +20,9 @@ const KILL_FEED_DURATION_MS = 5000;
 export class MatchHud {
   private scene: Phaser.Scene;
 
+  // Tab scoreboard toggle
+  private tabHeld = false;
+
   // Phase banner (top-center)
   private phaseBanner: Phaser.GameObjects.Text;
 
@@ -193,6 +196,7 @@ export class MatchHud {
         this.leaveButton.setVisible(false);
         break;
 
+      case "lobby":
       case "waiting":
         this.phaseBanner.setText("Waiting for players...");
         this.phaseBanner.setVisible(true);
@@ -270,6 +274,16 @@ export class MatchHud {
         break;
     }
 
+    // Tab-held scoreboard override: show during any phase
+    if (this.tabHeld && phase !== "ended" && phase !== "sandbox") {
+      if (scoreboard && scoreboard.length > 0) {
+        this.buildScoreboard(scoreboard, localSessionId);
+        this.scoreboardContainer.setVisible(true);
+      }
+    } else if (!this.tabHeld && phase !== "ended") {
+      this.scoreboardContainer.setVisible(false);
+    }
+
     // Tick kill feed timers
     this.tickKillFeed(delta);
   }
@@ -296,6 +310,11 @@ export class MatchHud {
 
     // Reposition
     this.repositionKillFeed();
+  }
+
+  /** Set whether the Tab key is held (shows scoreboard overlay) */
+  setTabHeld(held: boolean) {
+    this.tabHeld = held;
   }
 
   /** Hide all overlays (for match reset) */

@@ -21,6 +21,10 @@ import {
   DISMOUNT_PLAYER_FRICTION,
   PLAYER_SPEED,
   VEHICLE_RUN_OVER_RADIUS,
+  MAX_CHAT_MESSAGE_LENGTH,
+  MAX_CHAT_HISTORY,
+  LOBBY_MAX_BOTS,
+  BOT_SESSION_PREFIX,
   buildWallRects,
   resolveWallCollisions,
   applyMovement,
@@ -61,6 +65,9 @@ export class GameRoom extends Room<GameStateSchema> {
   // Taken character indices (enforces unique character per room)
   // Public so the REST API can read it
   takenCharacters = new Set<number>();
+
+  // Chat history (broadcast-based, kept in-memory for late joiners)
+  private chatHistory: { senderName: string; senderId: string; text: string }[] = [];
 
   // Dash constants (derived from shared)
   private static DASH_DURATION_S = DASH_DURATION_FRAMES / 60;
@@ -149,6 +156,103 @@ export class GameRoom extends Room<GameStateSchema> {
       this.lootSystem.processPickupClick(client.sessionId, data.pickupId);
     });
 
+    // --- Lobby message handlers ---
+
+    // Chat
+    this.onMessage("chat", (client: Client, data: { text: string }) => {
+      if (!data?.text || typeof data.text !== "string") return;
+      const text = data.text.trim().substring(0, MAX_CHAT_MESSAGE_LENGTH);
+      if (!text) return;
+
+      const player = this.state.players.get(client.sessionId);
+      const senderName = player?.displayName || client.sessionId.substring(0, 6);
+      const msg = { senderName, senderId: client.sessionId, text };
+
+      this.chatHistory.push(msg);
+      if (this.chatHistory.length > MAX_CHAT_HISTORY) {
+        this.chatHistory.shift();
+      }
+
+      this.broadcast("chat_msg", msg);
+    });
+
+    // Start match (host only, lobby phase only)
+    this.onMessage("start_match", (client: Client) => {
+      if (client.sessionId !== this.state.hostSessionId) return;
+      if (this.matchSystem.getPhase() !== "lobby") return;
+      this.matchSystem.startFromLobby();
+    });
+
+    // Add bot (host only, lobby phase only)
+    this.onMessage("add_bot", (client: Client, data: { personaId: string }) => {
+      if (client.sessionId !== this.state.hostSessionId) return;
+      if (this.matchSystem.getPhase() !== "lobby") return;
+      if (!data?.personaId || typeof data.personaId !== "string") return;
+
+      // Check bot limit
+      const botCount = this.botManager?.getBotIds().length ?? 0;
+      if (botCount >= LOBBY_MAX_BOTS) return;
+
+      // Check total player limit
+      if (this.state.players.size >= MAX_PLAYERS_PER_ROOM) return;
+
+      // Lazily create BotManager if needed
+      if (!this.botManager) {
+        this.botManager = new BotManager(
+          this.state, this.takenCharacters,
+          () => this.findSafeSpawn(), this.wallRects,
+        );
+      }
+
+      const botId = this.botManager.spawnSingleBot(
+        data.personaId,
+        this.combatSystem,
+        this.lootSystem,
+        this.buffSystem,
+        this.matchSystem,
+      );
+
+      if (botId) {
+        // Broadcast system chat message
+        const persona = this.state.players.get(botId);
+        const botName = persona?.displayName ?? data.personaId;
+        this.broadcastSystemChat(`${botName} has been added to the lobby.`);
+      }
+    });
+
+    // Remove bot (host only, lobby phase only)
+    this.onMessage("remove_bot", (client: Client, data: { botSessionId: string }) => {
+      if (client.sessionId !== this.state.hostSessionId) return;
+      if (this.matchSystem.getPhase() !== "lobby") return;
+      if (!data?.botSessionId || typeof data.botSessionId !== "string") return;
+      if (!BotManager.isBot(data.botSessionId)) return;
+
+      const botPlayer = this.state.players.get(data.botSessionId);
+      const botName = botPlayer?.displayName ?? data.botSessionId;
+
+      if (this.botManager?.removeBot(data.botSessionId)) {
+        // Unregister from all systems
+        this.vehicleSystem.unregisterPlayer(data.botSessionId);
+        this.lootSystem.unregisterPlayer(data.botSessionId);
+        this.combatSystem.unregisterPlayer(data.botSessionId);
+        this.buffSystem.unregisterPlayer(data.botSessionId);
+        this.matchSystem.onPlayerLeave(data.botSessionId);
+        this.state.players.delete(data.botSessionId);
+        this.prevButtons.delete(data.botSessionId);
+
+        this.broadcastSystemChat(`${botName} has been removed from the lobby.`);
+      }
+    });
+
+    // End game (host only, during active match)
+    this.onMessage("end_game", (client: Client) => {
+      if (client.sessionId !== this.state.hostSessionId) return;
+      const phase = this.matchSystem.getPhase();
+      if (phase === "lobby" || phase === "sandbox") return;
+      this.matchSystem.forceEndGame();
+      this.broadcastSystemChat("Host ended the game.");
+    });
+
     // Start fixed-rate simulation loop
     this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
 
@@ -197,12 +301,29 @@ export class GameRoom extends Room<GameStateSchema> {
     this.buffSystem.registerPlayer(client.sessionId);
     this.matchSystem.onPlayerJoin(client.sessionId);
     this.prevButtons.set(client.sessionId, 0);
+
+    // First human player becomes host
+    if (!this.state.hostSessionId) {
+      this.state.hostSessionId = client.sessionId;
+    }
+
+    // Send chat history to the joining client
+    if (this.chatHistory.length > 0) {
+      client.send("chat_history", this.chatHistory);
+    }
+
+    // Broadcast system chat (skip during sandbox)
+    if (this.matchSystem.getPhase() !== "sandbox") {
+      this.broadcastSystemChat(`${player.displayName} joined the lobby.`);
+    }
+
     console.log(`Player joined: ${client.sessionId} as character ${player.characterIndex} at (${player.x.toFixed(0)}, ${player.y.toFixed(0)})`);
   }
 
   onLeave(client: Client) {
     // Release character index before removing player
     const player = this.state.players.get(client.sessionId);
+    const playerName = player?.displayName || client.sessionId.substring(0, 6);
     if (player) {
       this.takenCharacters.delete(player.characterIndex);
     }
@@ -218,7 +339,35 @@ export class GameRoom extends Room<GameStateSchema> {
     this.dashCooldowns.delete(client.sessionId);
     this.consumableCooldowns.delete(client.sessionId);
     this.dismountSliding.delete(client.sessionId);
+
+    // Host migration: assign next human player as host
+    if (client.sessionId === this.state.hostSessionId) {
+      this.state.hostSessionId = "";
+      for (const c of this.clients) {
+        if (c.sessionId !== client.sessionId) {
+          this.state.hostSessionId = c.sessionId;
+          const newHost = this.state.players.get(c.sessionId);
+          const newHostName = newHost?.displayName || c.sessionId.substring(0, 6);
+          this.broadcastSystemChat(`${newHostName} is now the host.`);
+          break;
+        }
+      }
+    }
+
+    if (this.matchSystem.getPhase() !== "sandbox") {
+      this.broadcastSystemChat(`${playerName} left.`);
+    }
+
     console.log(`Player left: ${client.sessionId}`);
+  }
+
+  private broadcastSystemChat(text: string) {
+    const msg = { senderName: "", senderId: "system", text };
+    this.chatHistory.push(msg);
+    if (this.chatHistory.length > MAX_CHAT_HISTORY) {
+      this.chatHistory.shift();
+    }
+    this.broadcast("chat_msg", msg);
   }
 
   onDispose() {
@@ -369,9 +518,10 @@ export class GameRoom extends Room<GameStateSchema> {
   }
 
   private tick() {
+   try {
     const tick = this.state.tick;
     const phase = this.matchSystem.getPhase();
-    const frozen = phase === "waiting" || phase === "countdown" || phase === "ended";
+    const frozen = phase === "lobby" || phase === "waiting" || phase === "countdown" || phase === "ended";
 
     // Tick bot AI — bots push inputs into the same queue as human players
     this.botManager?.tickBots(tick, this.inputQueue, phase);
@@ -590,5 +740,8 @@ export class GameRoom extends Room<GameStateSchema> {
 
     // Advance server tick
     this.state.tick++;
+   } catch (err) {
+    console.error("Tick error:", err);
+   }
   }
 }

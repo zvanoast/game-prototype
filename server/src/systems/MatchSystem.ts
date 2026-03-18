@@ -20,7 +20,7 @@ export class MatchSystem {
   private buffSystem: BuffSystem | null = null;
   private vehicleSystem: VehicleSystem | null = null;
 
-  private phase: MatchPhase = "waiting";
+  private phase: MatchPhase = "lobby";
   private countdownTimer = 0;
   private postMatchTimer = 0;
   private findSafeSpawn: () => { x: number; y: number };
@@ -62,7 +62,7 @@ export class MatchSystem {
   }
 
   canAttack(): boolean {
-    return this.phase === "waiting" || this.phase === "playing" || this.phase === "sandbox";
+    return this.phase === "playing" || this.phase === "sandbox";
   }
 
   /** Called each server tick */
@@ -70,6 +70,9 @@ export class MatchSystem {
     if (this.sandbox) return; // No phase transitions in sandbox
 
     switch (this.phase) {
+      case "lobby":
+        // No-op: lobby waits for host to start
+        break;
       case "waiting":
         this.tickWaiting();
         break;
@@ -95,7 +98,7 @@ export class MatchSystem {
       return;
     }
 
-    if (this.phase === "waiting" || this.phase === "countdown") {
+    if (this.phase === "lobby" || this.phase === "waiting" || this.phase === "countdown") {
       player.eliminated = false;
       this.updateAliveCount();
     } else if (this.phase === "playing" || this.phase === "ended") {
@@ -144,6 +147,67 @@ export class MatchSystem {
 
     this.updateAliveCount();
     this.checkWinCondition();
+  }
+
+  /** Host forces the match to end immediately → back to lobby */
+  forceEndGame() {
+    if (this.phase === "lobby" || this.phase === "sandbox") return;
+    this.room.broadcast("match_end", { winnerId: null, winnerName: null, forced: true });
+    this.resetMatch();
+  }
+
+  /** Host triggers match start from lobby */
+  startFromLobby() {
+    if (this.phase !== "lobby") return;
+
+    // Full reset of all systems + players (same as end-of-match reset)
+    this.resetForNewRound();
+
+    this.updateAliveCount();
+
+    const totalPlayers = this.getAlivePlayerCount();
+    if (totalPlayers >= MIN_PLAYERS_TO_START) {
+      // Go to countdown
+      this.setPhase("countdown");
+      this.countdownTimer = COUNTDOWN_DURATION_MS;
+      this.state.countdownSeconds = Math.ceil(COUNTDOWN_DURATION_MS / 1000);
+      this.room.broadcast("match_countdown", { seconds: this.state.countdownSeconds });
+    } else {
+      // Not enough players — go straight to playing (e.g. 1 human vs bots)
+      this.startMatch();
+    }
+  }
+
+  /**
+   * Shared reset logic used by both resetMatch (end-of-game) and startFromLobby.
+   * Idempotent — safe to call even if systems are already in a clean state.
+   */
+  private resetForNewRound() {
+    // Reset all players to spawn positions and full health
+    this.state.players.forEach((player: PlayerSchema, sessionId: string) => {
+      const spawn = this.findSafeSpawn();
+      player.x = spawn.x;
+      player.y = spawn.y;
+      player.vx = 0;
+      player.vy = 0;
+      player.health = MAX_HEALTH;
+      player.state = "idle";
+      player.eliminated = false;
+      player.kills = 0;
+      player.shieldHp = 0;
+      player.speedMultiplier = 1.0;
+      player.damageMultiplier = 1.0;
+      player.consumableSlot1 = "";
+      player.consumableSlot2 = "";
+
+      this.lootSystem.resetPlayerEquipment(sessionId);
+    });
+
+    // Reset systems
+    this.lootSystem.resetForNewMatch();
+    if (this.combatSystem) this.combatSystem.resetForNewMatch();
+    if (this.buffSystem) this.buffSystem.resetForNewMatch();
+    if (this.vehicleSystem) this.vehicleSystem.resetForNewMatch();
   }
 
   // --- Phase ticking ---
@@ -233,57 +297,22 @@ export class MatchSystem {
   }
 
   private resetMatch() {
-    // Reset all players
+    this.resetForNewRound();
+
+    // Broadcast respawn positions to clients
     this.state.players.forEach((player: PlayerSchema, sessionId: string) => {
-      const spawn = this.findSafeSpawn();
-      player.x = spawn.x;
-      player.y = spawn.y;
-      player.vx = 0;
-      player.vy = 0;
-      player.health = MAX_HEALTH;
-      player.state = "idle";
-      player.eliminated = false;
-      player.kills = 0;
-      player.shieldHp = 0;
-      player.speedMultiplier = 1.0;
-      player.damageMultiplier = 1.0;
-      player.consumableSlot1 = "";
-      player.consumableSlot2 = "";
-
-      // Reset equipment
-      this.lootSystem.resetPlayerEquipment(sessionId);
-
-      // Broadcast respawn
       this.room.broadcast("respawn", {
         sessionId,
-        x: spawn.x,
-        y: spawn.y,
+        x: player.x,
+        y: player.y,
       });
     });
-
-    // Reset loot (re-close lockers, clear pickups)
-    this.lootSystem.resetForNewMatch();
-
-    // Reset combat (clear projectiles)
-    if (this.combatSystem) {
-      this.combatSystem.resetForNewMatch();
-    }
-
-    // Reset buffs
-    if (this.buffSystem) {
-      this.buffSystem.resetForNewMatch();
-    }
-
-    // Reset vehicles (despawn old, respawn fresh)
-    if (this.vehicleSystem) {
-      this.vehicleSystem.resetForNewMatch();
-    }
 
     // Reset state
     this.state.winnerId = "";
     this.state.countdownSeconds = 0;
     this.updateAliveCount();
-    this.setPhase("waiting");
+    this.setPhase("lobby");
   }
 
   // --- Helpers ---
