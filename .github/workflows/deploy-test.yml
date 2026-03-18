@@ -17,6 +17,11 @@ on:
         required: true
         type: string
 
+permissions:
+  issues: read
+  pull-requests: write
+  contents: read
+
 env:
   DEPLOY_HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
 
