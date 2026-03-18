@@ -408,7 +408,7 @@ export class MenuScene extends Phaser.Scene {
       this.nicknameInput.destroy();
       this.nicknameInput = null;
     }
-    this.scene.start("GameScene", { nickname: "Dev", testMode: true, characterIndex: this.selectedCharIndex });
+    this.scene.start("TestSetupScene", { nickname: "Dev", characterIndex: this.selectedCharIndex });
   }
 
   private toggleHowToPlay() {

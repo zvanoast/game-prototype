@@ -20,6 +20,7 @@ import {
   CONSUMABLE_USE_COOLDOWN_MS,
   DISMOUNT_PLAYER_FRICTION,
   PLAYER_SPEED,
+  VEHICLE_RUN_OVER_RADIUS,
   buildWallRects,
   resolveWallCollisions,
   applyMovement,
@@ -41,6 +42,7 @@ export class GameRoom extends Room<GameStateSchema> {
   private buffSystem!: BuffSystem;
   private matchSystem!: MatchSystem;
   private vehicleSystem!: VehicleSystem;
+  private botManager: BotManager | null = null;
 
   // Track previous buttons per player for edge detection
   private prevButtons = new Map<string, number>();
@@ -64,7 +66,7 @@ export class GameRoom extends Room<GameStateSchema> {
   private static DASH_DURATION_S = DASH_DURATION_FRAMES / 60;
   private static DASH_SPEED = DASH_DISTANCE / (DASH_DURATION_FRAMES / 60);
 
-  onCreate(options?: { sandbox?: boolean }) {
+  onCreate(options?: { sandbox?: boolean; botPersonas?: string[] }) {
     this.setState(new GameStateSchema());
     this.maxClients = MAX_PLAYERS_PER_ROOM;
 
@@ -112,13 +114,15 @@ export class GameRoom extends Room<GameStateSchema> {
       this.matchSystem.enableSandbox();
       this.lootSystem.spawnAllItems();
       this.vehicleSystem.spawnAllVehicles();
-      const botManager = new BotManager(this.state, this.takenCharacters, () => this.findSafeSpawn());
-      botManager.spawnBots(
-        SANDBOX_BOT_COUNT,
+      this.lootSystem.enableSandbox();
+      this.botManager = new BotManager(this.state, this.takenCharacters, () => this.findSafeSpawn(), this.wallRects);
+      this.botManager.spawnBots(
         this.combatSystem,
         this.lootSystem,
         this.buffSystem,
-        this.matchSystem
+        this.matchSystem,
+        options?.botPersonas,
+        SANDBOX_BOT_COUNT,
       );
       console.log("Sandbox mode enabled");
     } else {
@@ -222,6 +226,123 @@ export class GameRoom extends Room<GameStateSchema> {
     console.log("GameRoom disposed");
   }
 
+  /**
+   * Push all alive entities apart so they can't overlap.
+   * Circle-vs-circle: each pair splits the overlap evenly (or unevenly for vehicles).
+   * Runs once per tick after all movement has been applied.
+   */
+  private resolveEntityCollisions() {
+    // Collect all collidable entities into a flat array
+    interface Collidable {
+      x: number;
+      y: number;
+      radius: number;
+      type: "player" | "vehicle";
+      id: string | number; // sessionId or vehicle schemaId
+      mounted: boolean;    // mounted players move with vehicle, skip
+      dashing: boolean;    // dashing players push others but aren't pushed
+    }
+
+    const entities: Collidable[] = [];
+
+    // Players (including bots)
+    this.state.players.forEach((player: PlayerSchema, sessionId: string) => {
+      if (player.state === "dead") return;
+      entities.push({
+        x: player.x,
+        y: player.y,
+        radius: PLAYER_RADIUS,
+        type: "player",
+        id: sessionId,
+        mounted: this.vehicleSystem.isPlayerMounted(sessionId),
+        dashing: player.state === "dashing",
+      });
+    });
+
+    // Unmounted vehicles (parked vehicles are solid obstacles)
+    for (let i = 0; i < this.state.vehicles.length; i++) {
+      const v = this.state.vehicles.at(i);
+      if (!v || v.destroyed) continue;
+      // Ridden vehicles: the rider already has collision, skip to avoid double-push
+      if (v.riderId) continue;
+      entities.push({
+        x: v.x,
+        y: v.y,
+        radius: VEHICLE_RUN_OVER_RADIUS,
+        type: "vehicle",
+        id: v.id,
+        mounted: false,
+        dashing: false,
+      });
+    }
+
+    // O(n²) pairwise resolution — fine for ≤25 entities
+    for (let i = 0; i < entities.length; i++) {
+      const a = entities[i];
+      if (a.mounted) continue; // mounted players don't collide independently
+
+      for (let j = i + 1; j < entities.length; j++) {
+        const b = entities[j];
+        if (b.mounted) continue;
+
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const distSq = dx * dx + dy * dy;
+        const minDist = a.radius + b.radius;
+
+        if (distSq >= minDist * minDist || distSq === 0) continue;
+
+        const dist = Math.sqrt(distSq);
+        const overlap = minDist - dist;
+        const nx = dx / dist;
+        const ny = dy / dist;
+
+        // Decide push ratio: vehicles are immovable, dashers push but aren't pushed
+        let pushA = 0.5;
+        let pushB = 0.5;
+        if (a.type === "vehicle") {
+          pushA = 0; pushB = 1;
+        } else if (b.type === "vehicle") {
+          pushA = 1; pushB = 0;
+        }
+        if (a.dashing) {
+          pushA = 0; pushB = 1;
+        } else if (b.dashing) {
+          pushA = 1; pushB = 0;
+        }
+
+        a.x -= nx * overlap * pushA;
+        a.y -= ny * overlap * pushA;
+        b.x += nx * overlap * pushB;
+        b.y += ny * overlap * pushB;
+      }
+    }
+
+    // Write resolved positions back, then re-resolve wall collisions
+    for (const ent of entities) {
+      if (ent.mounted) continue;
+
+      if (ent.type === "player") {
+        const player = this.state.players.get(ent.id as string);
+        if (!player) continue;
+        const resolved = resolveWallCollisions(ent.x, ent.y, PLAYER_RADIUS, this.wallRects);
+        player.x = resolved.x;
+        player.y = resolved.y;
+      } else {
+        // Vehicle — update schema position
+        for (let i = 0; i < this.state.vehicles.length; i++) {
+          const v = this.state.vehicles.at(i);
+          if (v && v.id === ent.id) {
+            const resolved = resolveWallCollisions(ent.x, ent.y, VEHICLE_RUN_OVER_RADIUS, this.wallRects);
+            v.x = resolved.x;
+            v.y = resolved.y;
+            break;
+          }
+        }
+      }
+    }
+  }
+
   private findSafeSpawn(): { x: number; y: number } {
     const margin = PLAYER_RADIUS * 4;
     const mapW = 2048; // MAP_WIDTH_PX
@@ -251,6 +372,9 @@ export class GameRoom extends Room<GameStateSchema> {
     const tick = this.state.tick;
     const phase = this.matchSystem.getPhase();
     const frozen = phase === "waiting" || phase === "countdown" || phase === "ended";
+
+    // Tick bot AI — bots push inputs into the same queue as human players
+    this.botManager?.tickBots(tick, this.inputQueue, phase);
 
     // Process all queued inputs
     for (const { sessionId, input } of this.inputQueue) {
@@ -420,8 +544,14 @@ export class GameRoom extends Room<GameStateSchema> {
     // Clear queue
     this.inputQueue.length = 0;
 
-    // Tick pickups (auto-collect)
+    // Resolve entity-entity collisions (players push each other apart)
+    if (!frozen) {
+      this.resolveEntityCollisions();
+    }
+
+    // Tick pickups (auto-collect) and sandbox respawns
     this.lootSystem.tickPickups(tick);
+    this.lootSystem.tickRespawns(TICK_INTERVAL_MS);
 
     // Tick vehicles (durability, run-over)
     this.vehicleSystem.tickVehicles(TICK_INTERVAL_MS);

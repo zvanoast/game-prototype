@@ -393,6 +393,47 @@
 - PR comment posted/updated with test URL after each deploy
 - Manual `workflow_dispatch` fallback with env name + branch selection
 
+## Bot AI System — COMPLETE
+
+### Architecture: Utility AI + Personas
+- **Utility AI** (scored action selection): each tick, score N actions, pick highest, execute
+- Bots produce `InputPayload` objects pushed into `GameRoom.inputQueue` — same pipeline as human players
+- No special codepaths — bots go through the same movement, combat, loot, and buff systems
+
+### Files Created
+- `server/src/systems/bot/BotPersona.ts` — persona interface + 5 preset configs (Rusher Rick, Sniper Sam, Looter Larry, Survivor Sue, Berserker Bob)
+- `server/src/systems/bot/BotNavigation.ts` — nav grid from wallRects (64×64 boolean array), A* pathfinding (8-directional), line-of-sight (Bresenham DDA), path simplification
+- `server/src/systems/bot/BotPerception.ts` — spatial queries: nearest enemies, closed lockers, ground pickups, health %, weapon status, consumable status
+- `server/src/systems/bot/BotActions.ts` — 6 scored actions: AttackEnemy, FleeFromEnemy, OpenLocker, CollectPickup, UseConsumable, Wander
+- `server/src/systems/bot/BotBrain.ts` — per-bot AI controller: utility scoring loop, path caching, button edge detection, reaction delay, stuck detection
+
+### Files Modified
+- `server/src/systems/BotManager.ts` — extended with `brains` map, `tickBots()` method, persona round-robin assignment, nav grid init from wallRects
+- `server/src/rooms/GameRoom.ts` — `botManager` stored as class field, `tickBots()` called at top of `tick()` with phase gating, wallRects passed to constructor
+
+### Persona System
+| Persona | aggro | selfPres | loot | range | accuracy | melee |
+|---------|-------|----------|------|-------|----------|-------|
+| Rusher Rick | 0.9 | 0.2 | 0.3 | 64 | 0.5 | 0.8 |
+| Sniper Sam | 0.7 | 0.5 | 0.4 | 400 | 0.9 | 0.1 |
+| Looter Larry | 0.3 | 0.6 | 0.9 | 200 | 0.6 | 0.4 |
+| Survivor Sue | 0.4 | 0.9 | 0.5 | 250 | 0.7 | 0.3 |
+| Berserker Bob | 1.0 | 0.1 | 0.2 | 48 | 0.4 | 1.0 |
+
+### Bot Actions (scored behaviors)
+1. **AttackEnemy** — navigate to preferred range, aim with target leading + accuracy jitter, fire/melee
+2. **FleeFromEnemy** — move away when HP low, score spikes below healthFleeThreshold
+3. **OpenLocker** — navigate to nearest closed locker, press INTERACT when in range
+4. **CollectPickup** — walk to nearby ground pickup for auto-collect
+5. **UseConsumable** — health pack when hurt, buffs when in combat
+6. **Wander** — random roaming baseline (constant 0.15 score)
+
+### Navigation
+- Nav grid: 64×64 boolean array built once from wallRects
+- A*: 8-directional, max 500 nodes, re-paths every 10 ticks (500ms)
+- Line-of-sight: Bresenham DDA for shoot/see decisions
+- Stuck detection: re-paths after 40 ticks (~2s) stationary
+
 ### Configurable Server Port
 - `shared/src/constants.ts` — `SERVER_PORT` reads `process.env.PORT` with fallback to 3001
 - Only evaluated server-side; client continues using `window.location`

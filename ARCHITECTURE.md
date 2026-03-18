@@ -269,6 +269,54 @@ Client detects environment via `window.location`:
 - **Dev** (`localhost:5173`): `ws://localhost:3001` + `http://localhost:3001/api/...`
 - **Prod** (any other host): `wss://{host}` + relative `/api/...` (same origin)
 
+## Bot AI
+
+### Architecture: Utility AI
+
+Bots use a **Utility AI** system (scored action selection) rather than behavior trees or FSMs. Each tick, every bot scores all available actions and executes the highest-scoring one.
+
+```
+┌───────────────────────────────────────────────────┐
+│                   BotBrain (per bot)               │
+│                                                   │
+│  ┌──────────────┐  ┌─────────────────────────┐   │
+│  │  BotPersona  │  │   BotPerception         │   │
+│  │  (weights,   │  │   (nearest enemy,       │   │
+│  │   ranges,    │──│    lockers, pickups,     │   │
+│  │   accuracy)  │  │    health %, weapons)    │   │
+│  └──────────────┘  └────────────┬────────────┘   │
+│                                 │                  │
+│  ┌──────────────────────────────▼──────────────┐  │
+│  │  Score ALL Actions:                          │  │
+│  │  AttackEnemy:    0.72  ◄── highest           │  │
+│  │  FleeFromEnemy:  0.15                        │  │
+│  │  OpenLocker:     0.40                        │  │
+│  │  CollectPickup:  0.25                        │  │
+│  │  UseConsumable:  0.00                        │  │
+│  │  Wander:         0.15                        │  │
+│  └──────────────────────────────┬──────────────┘  │
+│                                 │                  │
+│  ┌──────────────────────────────▼──────────────┐  │
+│  │  Execute → InputPayload { dx, dy, aim, btn } │  │
+│  └──────────────────────────────┬──────────────┘  │
+└─────────────────────────────────┼─────────────────┘
+                                  │
+                                  ▼
+                    GameRoom.inputQueue[]
+                    (same pipeline as humans)
+```
+
+### Navigation System
+
+- **Nav grid**: 64×64 boolean array built once from `wallRects` (shared across all bots)
+- **A* pathfinding**: 8-directional, max 500 nodes, re-paths every 10 ticks (500ms)
+- **Line-of-sight**: Bresenham DDA ray march for shoot/see decisions
+- **Stuck detection**: clears cached path after 40 ticks (~2s) stationary
+
+### Key Design Decision: No Special Codepaths
+
+Bots produce `InputPayload` objects pushed into `GameRoom.inputQueue`. They go through the exact same server pipeline as human players — movement, collision, combat, loot, buffs. No drift between bot and human behavior.
+
 ## Performance Targets (Prototype)
 
 - Client renders at 60fps

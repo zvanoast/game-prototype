@@ -28,9 +28,10 @@ export const MELEE_ARC_DEGREES = 90;       // swing arc width
 export const MELEE_RANGE = 48;             // pixels from player center
 export const MELEE_ACTIVE_FRAMES = 6;      // frames the hitbox is active
 
-// --- Sandbox Bots ---
+// --- Sandbox ---
 export const SANDBOX_BOT_COUNT = 5;
 export const BOT_SESSION_PREFIX = "bot_";
+export const SANDBOX_RESPAWN_TIME_MS = 60000; // 60 seconds
 
 // --- Dash ---
 export const DASH_DISTANCE = 150;                // pixels traveled during dash
