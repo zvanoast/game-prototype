@@ -62,6 +62,14 @@ export class MenuScene extends Phaser.Scene {
       color: "#aaaaaa",
     }).setOrigin(0.5, 0.5);
 
+    // Test env banner
+    this.add.text(centerX, 125, "ZACH'S TEST SERVER", {
+      fontSize: "20px",
+      fontFamily: "monospace",
+      color: "#00ff88",
+      fontStyle: "bold",
+    }).setOrigin(0.5, 0.5);
+
     // Nickname label
     this.add.text(centerX, 145, "NICKNAME", {
       fontSize: "14px",

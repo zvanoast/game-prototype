@@ -12,7 +12,7 @@ export const ARENA_WIDTH = MAP_WIDTH_PX;
 export const ARENA_HEIGHT = MAP_HEIGHT_PX;
 
 // --- Player ---
-export const PLAYER_SPEED = 280;           // pixels per second (max speed)
+export const PLAYER_SPEED = 800;           // pixels per second (max speed) — cranked up for test env
 export const PLAYER_RADIUS = 16;           // collision half-size
 export const MAX_HEALTH = 100;
 export const PLAYER_ACCELERATION = 900;    // pixels per second² — snappy ramp-up
