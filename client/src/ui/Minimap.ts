@@ -54,7 +54,8 @@ export class Minimap {
   update(
     playerX: number,
     playerY: number,
-    lockers?: Array<{ x: number; y: number; opened: boolean }>
+    lockers?: Array<{ x: number; y: number; opened: boolean }>,
+    remotePlayers?: Array<{ x: number; y: number; state: string }>,
   ) {
     // Redraw: clear dynamic elements only by redrawing everything
     this.graphics.clear();
@@ -74,7 +75,20 @@ export class Minimap {
       }
     }
 
-    // Player dot
+    // Remote player dots (bots / other players)
+    if (remotePlayers) {
+      for (const rp of remotePlayers) {
+        if (rp.state === "dead") continue;
+        this.graphics.fillStyle(0xff4444, 1);
+        this.graphics.fillCircle(
+          rp.x * this.scaleX,
+          rp.y * this.scaleY,
+          2
+        );
+      }
+    }
+
+    // Player dot (drawn last so it's on top)
     this.graphics.fillStyle(0x00ff88, 1);
     this.graphics.fillCircle(
       playerX * this.scaleX,

@@ -1449,7 +1449,8 @@ export class GameScene extends Phaser.Scene {
 
     // Update minimap
     if (this.localPlayer) {
-      this.minimap.update(this.localPlayer.x, this.localPlayer.y, this.getLockerData());
+      const remotes = this.testMode ? this.getRemotePlayerData() : undefined;
+      this.minimap.update(this.localPlayer.x, this.localPlayer.y, this.getLockerData(), remotes);
     }
 
     // Update spectator camera
@@ -1635,6 +1636,15 @@ export class GameScene extends Phaser.Scene {
       }
     }
     return lockers;
+  }
+
+  /** Get remote player positions for minimap */
+  private getRemotePlayerData(): Array<{ x: number; y: number; state: string }> {
+    const result: Array<{ x: number; y: number; state: string }> = [];
+    for (const [, data] of this.remoteTargets) {
+      result.push({ x: data.x, y: data.y, state: data.state });
+    }
+    return result;
   }
 
   /** Show "Press E" prompt when near a closed locker */

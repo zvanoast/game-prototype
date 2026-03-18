@@ -178,16 +178,18 @@ export const ActionAttackEnemy: BotAction = {
     if (useMelee) {
       const meleeRange = getMeleeRange(self);
 
-      if (d > meleeRange * 0.9) {
-        // Close the distance — always move toward until in melee range
-        const move = canSee ? moveToward(self, target.x, target.y) : followPath(ctx);
-        dx = move.dx;
-        dy = move.dy;
+      // Always keep closing toward the target — mix in strafe as we get closer
+      const toward = canSee ? moveToward(self, target.x, target.y) : followPath(ctx);
+      if (d > meleeRange * 1.5) {
+        // Far away — full speed chase
+        dx = toward.dx;
+        dy = toward.dy;
       } else {
-        // In melee range — strafe using persistent direction
+        // Close — mostly forward with some strafe to be harder to hit
         const perpAngle = aimAngle + (Math.PI / 2) * ctx.strafeDir;
-        dx = Math.cos(perpAngle) * 0.5;
-        dy = Math.sin(perpAngle) * 0.5;
+        const strafeFactor = Math.min(0.4, persona.strafeFrequency * 0.5);
+        dx = toward.dx * (1 - strafeFactor) + Math.cos(perpAngle) * strafeFactor;
+        dy = toward.dy * (1 - strafeFactor) + Math.sin(perpAngle) * strafeFactor;
       }
 
       // Melee attack when in range and can see
@@ -195,22 +197,24 @@ export const ActionAttackEnemy: BotAction = {
         buttons |= Button.MELEE;
       }
     } else {
-      // Ranged: maintain preferred distance
+      // Ranged: maintain preferred distance with forward/back bias in strafe
+      const toward = canSee ? moveToward(self, target.x, target.y) : followPath(ctx);
+      const perpAngle = aimAngle + (Math.PI / 2) * ctx.strafeDir;
+
       if (d < persona.preferredRange * 0.6) {
-        // Too close — back away
-        const move = moveAway(self, target.x, target.y);
-        dx = move.dx;
-        dy = move.dy;
-      } else if (d > persona.preferredRange * 1.2) {
-        // Too far — close in
-        const move = canSee ? moveToward(self, target.x, target.y) : followPath(ctx);
-        dx = move.dx;
-        dy = move.dy;
+        // Too close — mostly back away, slight strafe
+        const away = moveAway(self, target.x, target.y);
+        dx = away.dx * 0.8 + Math.cos(perpAngle) * 0.2;
+        dy = away.dy * 0.8 + Math.sin(perpAngle) * 0.2;
+      } else if (d > persona.preferredRange * 1.3) {
+        // Too far — chase with slight strafe
+        dx = toward.dx * 0.85 + Math.cos(perpAngle) * 0.15;
+        dy = toward.dy * 0.85 + Math.sin(perpAngle) * 0.15;
       } else {
-        // At preferred range — strafe using persistent direction
-        const perpAngle = aimAngle + (Math.PI / 2) * ctx.strafeDir;
-        dx = Math.cos(perpAngle) * 0.7;
-        dy = Math.sin(perpAngle) * 0.7;
+        // In range band — strafe but drift inward slightly to stay aggressive
+        const inwardBias = d > persona.preferredRange ? 0.3 : -0.15;
+        dx = toward.dx * inwardBias + Math.cos(perpAngle) * 0.6;
+        dy = toward.dy * inwardBias + Math.sin(perpAngle) * 0.6;
       }
 
       // Shoot when we can see the target
