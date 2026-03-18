@@ -160,30 +160,9 @@ export class MatchSystem {
   startFromLobby() {
     if (this.phase !== "lobby") return;
 
-    // Full reset of all systems + players (same as end-of-match reset)
-    this.resetForNewRound();
-
-    this.updateAliveCount();
-
-    const totalPlayers = this.getAlivePlayerCount();
-    if (totalPlayers >= MIN_PLAYERS_TO_START) {
-      // Go to countdown
-      this.setPhase("countdown");
-      this.countdownTimer = COUNTDOWN_DURATION_MS;
-      this.state.countdownSeconds = Math.ceil(COUNTDOWN_DURATION_MS / 1000);
-      this.room.broadcast("match_countdown", { seconds: this.state.countdownSeconds });
-    } else {
-      // Not enough players — go straight to playing (e.g. 1 human vs bots)
-      this.startMatch();
-    }
-  }
-
-  /**
-   * Shared reset logic used by both resetMatch (end-of-game) and startFromLobby.
-   * Idempotent — safe to call even if systems are already in a clean state.
-   */
-  private resetForNewRound() {
-    // Reset all players to spawn positions and full health
+    // Respawn all players at fresh positions with full health.
+    // Do NOT call system resets here — systems are already clean from
+    // either onCreate (first game) or resetMatch (subsequent games).
     this.state.players.forEach((player: PlayerSchema, sessionId: string) => {
       const spawn = this.findSafeSpawn();
       player.x = spawn.x;
@@ -201,13 +180,27 @@ export class MatchSystem {
       player.consumableSlot2 = "";
 
       this.lootSystem.resetPlayerEquipment(sessionId);
+
+      this.room.broadcast("respawn", {
+        sessionId,
+        x: spawn.x,
+        y: spawn.y,
+      });
     });
 
-    // Reset systems
-    this.lootSystem.resetForNewMatch();
-    if (this.combatSystem) this.combatSystem.resetForNewMatch();
-    if (this.buffSystem) this.buffSystem.resetForNewMatch();
-    if (this.vehicleSystem) this.vehicleSystem.resetForNewMatch();
+    this.updateAliveCount();
+
+    const totalPlayers = this.getAlivePlayerCount();
+    if (totalPlayers >= MIN_PLAYERS_TO_START) {
+      // Go to countdown
+      this.setPhase("countdown");
+      this.countdownTimer = COUNTDOWN_DURATION_MS;
+      this.state.countdownSeconds = Math.ceil(COUNTDOWN_DURATION_MS / 1000);
+      this.room.broadcast("match_countdown", { seconds: this.state.countdownSeconds });
+    } else {
+      // Not enough players — go straight to playing (e.g. 1 human vs bots)
+      this.startMatch();
+    }
   }
 
   // --- Phase ticking ---
@@ -297,16 +290,37 @@ export class MatchSystem {
   }
 
   private resetMatch() {
-    this.resetForNewRound();
-
-    // Broadcast respawn positions to clients
+    // Reset all players
     this.state.players.forEach((player: PlayerSchema, sessionId: string) => {
+      const spawn = this.findSafeSpawn();
+      player.x = spawn.x;
+      player.y = spawn.y;
+      player.vx = 0;
+      player.vy = 0;
+      player.health = MAX_HEALTH;
+      player.state = "idle";
+      player.eliminated = false;
+      player.kills = 0;
+      player.shieldHp = 0;
+      player.speedMultiplier = 1.0;
+      player.damageMultiplier = 1.0;
+      player.consumableSlot1 = "";
+      player.consumableSlot2 = "";
+
+      this.lootSystem.resetPlayerEquipment(sessionId);
+
       this.room.broadcast("respawn", {
         sessionId,
-        x: player.x,
-        y: player.y,
+        x: spawn.x,
+        y: spawn.y,
       });
     });
+
+    // Reset systems (lockers, projectiles, buffs, vehicles)
+    this.lootSystem.resetForNewMatch();
+    if (this.combatSystem) this.combatSystem.resetForNewMatch();
+    if (this.buffSystem) this.buffSystem.resetForNewMatch();
+    if (this.vehicleSystem) this.vehicleSystem.resetForNewMatch();
 
     // Reset state
     this.state.winnerId = "";

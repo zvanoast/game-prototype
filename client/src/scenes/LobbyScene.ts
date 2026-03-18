@@ -35,6 +35,7 @@ export class LobbyScene extends Phaser.Scene {
   private isHost = false;
   private localSessionId = "";
   private chatMessages: ChatMsg[] = [];
+  private generation = 0; // incremented each init; stale handlers compare against this
 
   // UI elements
   private playerListContainer!: Phaser.GameObjects.Container;
@@ -59,6 +60,8 @@ export class LobbyScene extends Phaser.Scene {
     this.chatMessages = [];
     this.isHost = false;
     this.room = null;
+    this.transitioningToGame = false;
+    this.generation++;
   }
 
   create() {
@@ -222,9 +225,13 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   private setupRoomListeners(room: Room) {
+    // Capture generation so stale handlers from previous lobby entries bail
+    const gen = this.generation;
+    const stale = () => this.generation !== gen;
+
     // Track state changes (phase, host)
     room.state.onChange(() => {
-      if (!this.scene.isActive()) return;
+      if (stale()) return;
       const state = room.state as any;
       const phase = state.phase as string;
       const hostId = state.hostSessionId as string;
@@ -240,13 +247,13 @@ export class LobbyScene extends Phaser.Scene {
 
     // Player list updates (guard against destroyed scene)
     room.state.players.onAdd(() => {
-      if (this.scene.isActive()) {
+      if (!stale()) {
         this.refreshPlayerList();
         this.refreshScoreboard();
       }
     });
     room.state.players.onRemove(() => {
-      if (this.scene.isActive()) {
+      if (!stale()) {
         this.refreshPlayerList();
         this.refreshScoreboard();
       }
@@ -254,7 +261,7 @@ export class LobbyScene extends Phaser.Scene {
 
     // Chat messages
     room.onMessage("chat_msg", (msg: ChatMsg) => {
-      if (!this.scene.isActive()) return;
+      if (stale()) return;
       this.chatMessages.push(msg);
       if (this.chatMessages.length > CHAT_MAX_DISPLAY) {
         this.chatMessages.shift();
@@ -264,7 +271,7 @@ export class LobbyScene extends Phaser.Scene {
 
     // Chat history on join
     room.onMessage("chat_history", (history: ChatMsg[]) => {
-      if (!this.scene.isActive()) return;
+      if (stale()) return;
       for (const msg of history) {
         this.chatMessages.push(msg);
       }
@@ -274,10 +281,15 @@ export class LobbyScene extends Phaser.Scene {
       this.refreshChat();
     });
 
+    // Sync current state immediately (onChange only fires on future changes)
+    const state = room.state as any;
+    this.isHost = (state.hostSessionId === this.localSessionId);
+
     // Initial render
     this.refreshPlayerList();
     this.refreshScoreboard();
     this.refreshChat();
+    this.updateHostUI();
   }
 
   private refreshPlayerList() {
@@ -497,8 +509,11 @@ export class LobbyScene extends Phaser.Scene {
     this.refreshChat();
   }
 
+  private transitioningToGame = false;
+
   private transitionToGame() {
-    if (!this.room) return;
+    if (!this.room || this.transitioningToGame) return;
+    this.transitioningToGame = true;
 
     if (this.chatInputDom) {
       this.chatInputDom.destroy();

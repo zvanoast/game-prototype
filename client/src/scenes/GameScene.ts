@@ -191,6 +191,9 @@ export class GameScene extends Phaser.Scene {
   private pauseMenuContainer: Phaser.GameObjects.Container | null = null;
   private pauseMenuOpen = false;
 
+  // Generation counter — incremented each init; stale handlers compare against this
+  private generation = 0;
+
   constructor() {
     super({ key: "GameScene" });
   }
@@ -212,6 +215,7 @@ export class GameScene extends Phaser.Scene {
     this.preserveRoom = false;
     this.pauseMenuOpen = false;
     this.pauseMenuContainer = null;
+    this.generation++;
   }
 
   create() {
@@ -635,6 +639,10 @@ export class GameScene extends Phaser.Scene {
         this.localSessionId = room.sessionId;
       }
 
+      // Capture generation so stale handlers from previous scene entries bail
+      const gen = this.generation;
+      const alive = () => this.generation === gen;
+
       // Track phase changes from state
       const trackState = () => {
         const state = room.state as any;
@@ -674,6 +682,7 @@ export class GameScene extends Phaser.Scene {
       };
 
       room.state.onChange(() => {
+        if (!alive()) return;
         trackState();
       });
 
@@ -757,7 +766,7 @@ export class GameScene extends Phaser.Scene {
         }
 
         player.onChange(() => {
-          // Track displayName updates
+          if (!alive()) return;
           if (player.displayName) {
             this.playerNames.set(sessionId, player.displayName);
           }
@@ -816,6 +825,7 @@ export class GameScene extends Phaser.Scene {
 
       // Register onAdd for future players
       room.state.players.onAdd((player: any, sessionId: string) => {
+        if (!alive()) return;
         handlePlayerAdd(player, sessionId);
       });
 
@@ -828,6 +838,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.state.players.onRemove((_player: any, sessionId: string) => {
+        if (!alive()) return;
         const sprite = this.remotePlayers.get(sessionId);
         if (sprite) {
           sprite.destroy();
@@ -1064,8 +1075,8 @@ export class GameScene extends Phaser.Scene {
         }
       });
 
-      // Combat messages
       room.onMessage("hit", (data: any) => {
+        if (!alive()) return;
         // Show damage number at hit location
         this.events.emit("damage:number", data.x, data.y, data.damage);
 
@@ -1080,11 +1091,12 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("melee_hit", (data: any) => {
-        // Show melee impact particles at attacker position
+        if (!alive()) return;
         this.particles.impact(data.x, data.y, 0xffffff);
       });
 
       room.onMessage("kill", (data: any) => {
+        if (!alive()) return;
         // Death explosion at victim location
         this.particles.deathExplosion(data.x, data.y);
         this.events.emit("sfx:death");
@@ -1097,13 +1109,14 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("player_eliminated", (data: any) => {
-        // If the spectated player was eliminated, cycle
+        if (!alive()) return;
         if (this.spectating && this.spectateTargetId === data.sessionId) {
           this.cycleSpectateTarget(1);
         }
       });
 
       room.onMessage("match_start", () => {
+        if (!alive()) return;
         this.matchPhase = "playing";
         this.matchWinner = null;
         this.matchWinnerName = "";
@@ -1113,6 +1126,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("match_end", (data: any) => {
+        if (!alive()) return;
         this.matchPhase = "ended";
         this.matchWinnerName = data.winnerName ?? "";
         if (!data.winnerId) {
@@ -1125,6 +1139,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("match_countdown", (data: any) => {
+        if (!alive()) return;
         this.matchCountdownSeconds = data.seconds ?? 0;
         if (data.seconds > 0) {
           this.events.emit("sfx:countdown_beep");
@@ -1132,6 +1147,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("respawn", (data: any) => {
+        if (!alive()) return;
         if (data.sessionId === room.sessionId && this.localPlayer) {
           // Reset local player
           this.localPlayer.setPosition(data.x, data.y);
@@ -1149,16 +1165,18 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("projectile_wall", (data: any) => {
+        if (!alive()) return;
         this.particles.impact(data.x, data.y, 0xffff00);
       });
 
       room.onMessage("locker_opened", (data: any) => {
-        // Particle burst at locker location
+        if (!alive()) return;
         this.particles.impact(data.x, data.y, 0x8B6914);
         this.events.emit("sfx:locker_open");
       });
 
       room.onMessage("respawn_start", (data: any) => {
+        if (!alive()) return;
         if (data.type === "pickup") {
           this.respawnOverlay.addTimer(
             `pickup_${data.x}_${data.y}`,
@@ -1169,6 +1187,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("weapon_pickup", (data: any) => {
+        if (!alive()) return;
         if (data.sessionId === room.sessionId) {
           // Particle burst on local player
           if (this.localPlayer) {
@@ -1179,6 +1198,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("consumable_pickup", (data: any) => {
+        if (!alive()) return;
         if (data.sessionId === room.sessionId) {
           if (this.localPlayer) {
             this.particles.impact(this.localPlayer.x, this.localPlayer.y, 0x44ff44);
@@ -1188,6 +1208,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("consumable_used", (data: any) => {
+        if (!alive()) return;
         const config = getConsumableConfig(data.consumableId);
         const color = config?.color ?? 0xffffff;
 
@@ -1206,7 +1227,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("buff_expired", (data: any) => {
-        // Particle puff when buff expires
+        if (!alive()) return;
         if (data.sessionId === room.sessionId) {
           if (this.localPlayer) {
             this.particles.impact(this.localPlayer.x, this.localPlayer.y, 0x888888);
@@ -1217,6 +1238,7 @@ export class GameScene extends Phaser.Scene {
 
       // Vehicle messages
       room.onMessage("vehicle_mount", (data: any) => {
+        if (!alive()) return;
         if (data.sessionId === room.sessionId) {
           this.localMountedVehicleId = data.vehicleSchemaId;
           this.stateMachine.setMounted(true);
@@ -1225,6 +1247,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("vehicle_dismount", (data: any) => {
+        if (!alive()) return;
         if (data.sessionId === room.sessionId) {
           this.localMountedVehicleId = 0;
           this.stateMachine.setMounted(false);
@@ -1233,11 +1256,12 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("vehicle_destroyed", (_data: any) => {
+        if (!alive()) return;
         this.events.emit("sfx:vehicle_destroyed");
       });
 
       room.onMessage("vehicle_hit", (data: any) => {
-        // Find target position for damage number
+        if (!alive()) return;
         let tx = 0, ty = 0;
         if (data.targetId === room.sessionId && this.localPlayer) {
           tx = this.localPlayer.x;
@@ -1255,15 +1279,17 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("weapon_depleted", (_data: any) => {
-        // Ranged weapon ammo depleted — UI will update via state sync
+        if (!alive()) return;
       });
 
       room.onMessage("dash_cooldown", (data: any) => {
+        if (!alive()) return;
         this.dashCooldownDuration = data.durationMs;
         this.dashCooldownTimer = data.durationMs;
       });
 
       room.onLeave((code: number) => {
+        if (!alive()) return;
         console.log(`Disconnected from room (code: ${code})`);
       });
     } catch (err) {
