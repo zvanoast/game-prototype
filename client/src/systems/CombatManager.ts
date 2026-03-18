@@ -80,14 +80,12 @@ export class CombatManager {
       runChildUpdate: false,
     });
 
-    // Melee arc visual
+    // Melee arc visual (depth updated dynamically in drawMeleeArc)
     this.meleeArcGraphics = this.scene.add.graphics();
-    this.meleeArcGraphics.setDepth(10);
     this.meleeArcGraphics.setVisible(false);
 
-    // Muzzle flash sprite
+    // Muzzle flash sprite (depth updated dynamically when shown)
     this.muzzleFlash = this.scene.add.sprite(0, 0, "muzzle_flash");
-    this.muzzleFlash.setDepth(15);
     this.muzzleFlash.setVisible(false);
 
     // Collisions: projectiles vs walls
@@ -248,8 +246,9 @@ export class CombatManager {
     // Apply per-weapon tween animations
     this.applyProjectileTweens(proj, weaponId);
 
-    // Muzzle flash
+    // Muzzle flash (Y-sorted near player)
     this.muzzleFlash.setPosition(sx, sy);
+    this.muzzleFlash.setDepth(this.player.y + 0.5);
     this.muzzleFlash.setVisible(true);
     this.muzzleFlashTimer = 2;
 
@@ -348,6 +347,7 @@ export class CombatManager {
 
     this.meleeArcGraphics.clear();
     this.meleeArcGraphics.setVisible(true);
+    this.meleeArcGraphics.setDepth(this.player.y + 0.5);
 
     const arcColor = this.meleeConfig.color ?? 0xffffff;
     this.meleeArcGraphics.fillStyle(arcColor, 0.2);

@@ -135,6 +135,8 @@ export class BootScene extends Phaser.Scene {
     this.generateConsumablePickupTextures();
     this.generateVehicleTextures();
     this.generateDummyTexture();
+    this.generateWallFrontTexture();
+    this.generateShadowTexture();
     this.generateMiscTextures();
     this.registerAnimations();
 
@@ -648,6 +650,60 @@ export class BootScene extends Phaser.Scene {
     particleGfx.fillCircle(2, 2, 2);
     particleGfx.generateTexture("particle", 4, 4);
     particleGfx.destroy();
+  }
+
+  // ─── Wall-front texture (south-facing wall face for 3/4 view) ──────
+
+  private generateWallFrontTexture() {
+    const T = TILE_SIZE; // 32
+    const K = 64;        // Kenney tile size
+
+    // Use the wall tile (col=0, row=1) but darken it for the front face
+    const source = this.textures.get("kenney_tilesheet").getSourceImage() as HTMLImageElement;
+    const [col, row] = TILE_PICKS[1]; // wall tile
+
+    const canvas = document.createElement("canvas");
+    canvas.width = T;
+    canvas.height = T;
+    const ctx = canvas.getContext("2d")!;
+
+    ctx.drawImage(source, col * K, row * K, K, K, 0, 0, T, T);
+
+    // Darken to distinguish from wall tops
+    ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+    ctx.fillRect(0, 0, T, T);
+
+    const tex = this.textures.createCanvas("wall_front", T, T);
+    if (tex) {
+      const destCtx = tex.getContext();
+      destCtx.drawImage(canvas, 0, 0);
+      tex.refresh();
+      tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+    }
+  }
+
+  // ─── Shadow ellipse texture (for entity drop shadows) ─────────────
+
+  private generateShadowTexture() {
+    const w = 32;
+    const h = 16;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+
+    ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+    ctx.beginPath();
+    ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const tex = this.textures.createCanvas("shadow", w, h);
+    if (tex) {
+      const destCtx = tex.getContext();
+      destCtx.drawImage(canvas, 0, 0);
+      tex.refresh();
+      tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+    }
   }
 
   // ─── Animations ─────────────────────────────────────────────────────

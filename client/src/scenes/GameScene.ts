@@ -6,7 +6,7 @@ import { Minimap } from "../ui/Minimap";
 import { WeaponHud } from "../ui/WeaponHud";
 import { MatchHud, ScoreboardEntry } from "../ui/MatchHud";
 import { DamageNumberManager } from "../ui/DamageNumber";
-import { TilemapManager } from "../world/TilemapManager";
+import { TilemapManager, WALL_FRONT_HEIGHT } from "../world/TilemapManager";
 import { CombatManager } from "../systems/CombatManager";
 import { InputBuffer } from "../systems/InputBuffer";
 import { ComboDetector } from "../systems/ComboDetector";
@@ -183,6 +183,14 @@ export class GameScene extends Phaser.Scene {
   private vehicleTargets = new Map<number, { x: number; y: number; angle: number; riderId: string; destroyed: boolean; durabilityPct: number }>();
   private localMountedVehicleId = 0; // 0 = on foot
 
+  // Wall-front sprites (3/4 oblique view)
+  private wallFrontSprites: Phaser.GameObjects.Image[] = [];
+
+  // Entity shadows
+  private localPlayerShadow: Phaser.GameObjects.Image | null = null;
+  private remoteShadows = new Map<string, Phaser.GameObjects.Image>();
+  private vehicleShadows = new Map<number, Phaser.GameObjects.Image>();
+
   // Server projectile count for debug
   private serverProjectileCount = 0;
 
@@ -246,6 +254,10 @@ export class GameScene extends Phaser.Scene {
     this.vehicleTargets.clear();
     this.localMountedVehicleId = 0;
     this.hoveredPickupId = null;
+    this.wallFrontSprites = [];
+    this.localPlayerShadow = null;
+    this.remoteShadows.clear();
+    this.vehicleShadows.clear();
 
     // Rebuild player_sheet from chosen character (destroys old texture, re-registers frames)
     const chosenFrame = CHARACTER_DEFS[this.characterIndex]?.frame ?? CHARACTER_DEFS[0].frame;
@@ -282,6 +294,15 @@ export class GameScene extends Phaser.Scene {
 
     // Create tilemap
     this.tilemapManager = new TilemapManager(this);
+
+    // Create wall-front sprites for 3/4 oblique view
+    const TILE_SIZE = 32;
+    for (const pos of this.tilemapManager.getWallFrontPositions()) {
+      const sprite = this.add.image(pos.x + TILE_SIZE / 2, pos.y + TILE_SIZE / 2, "wall_front");
+      sprite.setDepth(pos.y); // Y-sort by top edge so players south of wall render in front
+      sprite.setTint(0xcccccc); // slightly darker than wall tops
+      this.wallFrontSprites.push(sprite);
+    }
 
     // Pre-compute wall rects for shared collision (matches server)
     this.wallRects = buildWallRects();
@@ -340,12 +361,12 @@ export class GameScene extends Phaser.Scene {
       padding: { x: 6, y: 3 },
     });
     this.interactPrompt.setOrigin(0.5, 1);
-    this.interactPrompt.setDepth(50);
+    this.interactPrompt.setDepth(2100);
     this.interactPrompt.setVisible(false);
 
     // Dash cooldown ring (drawn around player's feet)
     this.dashCooldownGfx = this.add.graphics();
-    this.dashCooldownGfx.setDepth(14);
+    this.dashCooldownGfx.setDepth(2100);
 
     // Respawn overlay for sandbox item respawns
     this.respawnOverlay = new RespawnOverlay(this);
@@ -361,7 +382,7 @@ export class GameScene extends Phaser.Scene {
     });
     this.pickupTooltipText.setOrigin(0.5, 1);
     this.pickupTooltip = this.add.container(0, 0, [this.pickupTooltipText]);
-    this.pickupTooltip.setDepth(55);
+    this.pickupTooltip.setDepth(2200);
     this.pickupTooltip.setVisible(false);
 
     // Spectator label (shown above followed player)
@@ -373,7 +394,7 @@ export class GameScene extends Phaser.Scene {
       padding: { x: 4, y: 2 },
     });
     this.spectateLabel.setOrigin(0.5, 1);
-    this.spectateLabel.setDepth(100);
+    this.spectateLabel.setDepth(2500);
     this.spectateLabel.setVisible(false);
 
     // Block browser context menu on game canvas (must be set before any right-click)
@@ -428,9 +449,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private spawnLocalPlayer(x: number, y: number) {
+    // Create drop shadow under player
+    this.localPlayerShadow = this.add.image(x, y + PLAYER_RADIUS, "shadow");
+    this.localPlayerShadow.setDepth(y - 1);
+    this.localPlayerShadow.setAlpha(0.3);
+
     this.localPlayer = this.physics.add.sprite(x, y, "player_sheet");
     this.localPlayer.setOrigin(0.5, 0.5);
-    this.localPlayer.setDepth(10);
+    this.localPlayer.setDepth(y); // Y-sorted depth
     this.localPlayer.play("player_idle");
 
     // Circular physics body (kept for overlap detection, not for movement)
@@ -578,10 +604,16 @@ export class GameScene extends Phaser.Scene {
           const hasSheet = this.textures.exists(sheetKey);
           const sprite = this.add.sprite(player.x, player.y, hasSheet ? sheetKey : "player_sheet");
           sprite.setOrigin(0.5, 0.5);
-          sprite.setDepth(9);
+          sprite.setDepth(player.y); // Y-sorted depth
           sprite.play(hasSheet ? `player_idle_${charIdx}` : "player_idle");
           this.remoteCharIndices.set(sessionId, charIdx);
           this.remotePlayers.set(sessionId, sprite);
+
+          // Create drop shadow for remote player
+          const shadow = this.add.image(player.x, player.y + PLAYER_RADIUS, "shadow");
+          shadow.setDepth(player.y - 1);
+          shadow.setAlpha(0.3);
+          this.remoteShadows.set(sessionId, shadow);
           this.remoteTargets.set(sessionId, {
             x: player.x,
             y: player.y,
@@ -593,9 +625,9 @@ export class GameScene extends Phaser.Scene {
             damageMultiplier: player.damageMultiplier ?? 1.0,
           });
 
-          // Create health bar graphics for remote player
+          // Create health bar graphics for remote player (depth updated per-frame)
           const hpBar = this.add.graphics();
-          hpBar.setDepth(15);
+          hpBar.setDepth(player.y + 1);
           this.remoteHealthBars.set(sessionId, hpBar);
 
           console.log(`Remote player joined: ${sessionId}`);
@@ -671,6 +703,11 @@ export class GameScene extends Phaser.Scene {
           hpBar.destroy();
           this.remoteHealthBars.delete(sessionId);
         }
+        const shadow = this.remoteShadows.get(sessionId);
+        if (shadow) {
+          shadow.destroy();
+          this.remoteShadows.delete(sessionId);
+        }
         this.remoteCharIndices.delete(sessionId);
         this.playerNames.delete(sessionId);
 
@@ -687,7 +724,7 @@ export class GameScene extends Phaser.Scene {
         const texture = locker.opened ? "locker_open" : "locker_closed";
         const sprite = this.add.sprite(locker.x, locker.y, texture);
         sprite.setOrigin(0.5, 0.5);
-        sprite.setDepth(3);
+        sprite.setDepth(locker.y); // Y-sorted (static)
         this.lockerSprites.set(locker.id, sprite);
 
         locker.onChange(() => {
@@ -725,7 +762,7 @@ export class GameScene extends Phaser.Scene {
         label.setOrigin(0.5, 0);
 
         const container = this.add.container(pickup.x, pickup.y, [sprite, label]);
-        container.setDepth(5);
+        container.setDepth(pickup.y); // Y-sorted
 
         // Make container interactive for click + hover
         container.setSize(28, 28);
@@ -801,12 +838,18 @@ export class GameScene extends Phaser.Scene {
         label.setOrigin(0.5, 0);
 
         const container = this.add.container(vehicle.x, vehicle.y, [sprite, label]);
-        container.setDepth(4);
+        container.setDepth(vehicle.y); // Y-sorted
         this.vehicleContainers.set(vehicle.id, container);
 
-        // Durability bar graphics
+        // Drop shadow for vehicle
+        const vShadow = this.add.image(vehicle.x, vehicle.y + 16, "shadow");
+        vShadow.setDepth(vehicle.y - 1);
+        vShadow.setAlpha(0.3);
+        this.vehicleShadows.set(vehicle.id, vShadow);
+
+        // Durability bar graphics (depth updated per-frame)
         const durBar = this.add.graphics();
-        durBar.setDepth(15);
+        durBar.setDepth(vehicle.y + 1);
         this.vehicleDurabilityBars.set(vehicle.id, durBar);
 
         // Store initial target
@@ -837,6 +880,11 @@ export class GameScene extends Phaser.Scene {
           bar.destroy();
           this.vehicleDurabilityBars.delete(vehicle.id);
         }
+        const vShadow = this.vehicleShadows.get(vehicle.id);
+        if (vShadow) {
+          vShadow.destroy();
+          this.vehicleShadows.delete(vehicle.id);
+        }
         this.vehicleTargets.delete(vehicle.id);
       });
 
@@ -844,7 +892,7 @@ export class GameScene extends Phaser.Scene {
       room.state.projectiles.onAdd((proj: any, _key: number) => {
         const texKey = this.getProjectileTexture(proj.weaponId ?? "");
         const sprite = this.add.sprite(proj.x, proj.y, texKey);
-        sprite.setDepth(8);
+        sprite.setDepth(proj.y); // Y-sorted
         sprite.setOrigin(0.5, 0.5);
         // Set initial rotation to face travel direction
         if (proj.vx !== undefined && proj.vy !== undefined) {
@@ -868,6 +916,7 @@ export class GameScene extends Phaser.Scene {
           const s = this.serverProjectileSprites.get(proj.id);
           if (s) {
             s.setPosition(proj.x, proj.y);
+            s.setDepth(proj.y); // Y-sorted
           }
         });
       });
@@ -1305,6 +1354,16 @@ export class GameScene extends Phaser.Scene {
       this.localPlayer.setAlpha(1);
     }
 
+    // Update local player Y-sorted depth + shadow position
+    if (this.localPlayer) {
+      this.localPlayer.setDepth(this.localPlayer.y);
+      if (this.localPlayerShadow) {
+        this.localPlayerShadow.setPosition(this.localPlayer.x, this.localPlayer.y + PLAYER_RADIUS);
+        this.localPlayerShadow.setDepth(this.localPlayer.y - 1);
+        this.localPlayerShadow.setVisible(!isDead);
+      }
+    }
+
     // Dynamic camera lerp — tighten up at high speed so it doesn't lag behind
     if (this.localPlayer && !this.spectating) {
       const speed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
@@ -1366,9 +1425,21 @@ export class GameScene extends Phaser.Scene {
           sprite.play(idleKey, true);
         }
 
+        // Y-sorted depth
+        sprite.setDepth(sprite.y);
+
+        // Update shadow
+        const rShadow = this.remoteShadows.get(sessionId);
+        if (rShadow) {
+          rShadow.setPosition(sprite.x, sprite.y + PLAYER_RADIUS);
+          rShadow.setDepth(sprite.y - 1);
+          rShadow.setVisible(target.state !== "dead");
+        }
+
         // Update health bar (with shield)
         const hpBar = this.remoteHealthBars.get(sessionId);
         if (hpBar) {
+          hpBar.setDepth(sprite.y + 1);
           this.drawRemoteHealthBar(hpBar, sprite.x, sprite.y, target.health, target.shieldHp);
         }
 
@@ -1397,6 +1468,17 @@ export class GameScene extends Phaser.Scene {
       container.x = Phaser.Math.Linear(container.x, target.x, posLerp);
       container.y = Phaser.Math.Linear(container.y, target.y, posLerp);
 
+      // Y-sorted depth
+      container.setDepth(container.y);
+
+      // Update vehicle shadow
+      const vShadow = this.vehicleShadows.get(vehicleId);
+      if (vShadow) {
+        vShadow.setPosition(container.x, container.y + 16);
+        vShadow.setDepth(container.y - 1);
+        vShadow.setVisible(!target.destroyed);
+      }
+
       // Rotate the sprite (first child), not the label.
       // Vehicle textures are drawn pointing up, so add π/2 to align with heading.
       const sprite = container.getAt(0) as Phaser.GameObjects.Sprite;
@@ -1415,10 +1497,11 @@ export class GameScene extends Phaser.Scene {
         container.setAlpha(1);
       }
 
-      // Update durability bar
+      // Update durability bar (Y-sorted above vehicle)
       const bar = this.vehicleDurabilityBars.get(vehicleId);
       if (bar) {
         bar.clear();
+        bar.setDepth(container.y + 1);
         if (target.riderId && !target.destroyed) {
           const barW = 32;
           const barH = 3;

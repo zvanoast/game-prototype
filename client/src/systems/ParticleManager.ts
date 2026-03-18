@@ -27,7 +27,7 @@ export class ParticleManager {
       tint: 0xffff00,
       emitting: false,
     });
-    emitter.setDepth(20);
+    emitter.setDepth(2100);
     emitter.explode(5);
     this.scene.time.delayedCall(300, () => emitter.destroy());
   }
@@ -43,7 +43,7 @@ export class ParticleManager {
       tint: color,
       emitting: false,
     });
-    emitter.setDepth(20);
+    emitter.setDepth(2100);
     emitter.explode(8);
     this.scene.time.delayedCall(400, () => emitter.destroy());
   }
@@ -59,7 +59,7 @@ export class ParticleManager {
       tint: 0x00ff88,
       emitting: false,
     });
-    emitter.setDepth(20);
+    emitter.setDepth(2100);
     emitter.explode(2);
     this.scene.time.delayedCall(400, () => emitter.destroy());
   }
@@ -75,7 +75,7 @@ export class ParticleManager {
       tint: 0xff4444,
       emitting: false,
     });
-    emitter.setDepth(20);
+    emitter.setDepth(2100);
     emitter.explode(20);
     this.scene.time.delayedCall(600, () => emitter.destroy());
   }
@@ -109,7 +109,7 @@ export class ParticleManager {
       follow: sprite,
       emitting: true,
     });
-    emitter.setDepth(8);
+    emitter.setDepth(2100);
 
     return () => {
       emitter.stop();

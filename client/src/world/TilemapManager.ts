@@ -6,10 +6,15 @@ import {
   OBSTACLES,
 } from "shared";
 
+/** Height of south-facing wall front sprites (client-only visual) */
+export const WALL_FRONT_HEIGHT = 32;
+
 export class TilemapManager {
   private tilemap!: Phaser.Tilemaps.Tilemap;
-  private wallLayer!: Phaser.Tilemaps.TilemapLayer;
+  private floorLayer!: Phaser.Tilemaps.TilemapLayer;
+  private wallTopLayer!: Phaser.Tilemaps.TilemapLayer;
   private wallPositions: { x: number; y: number }[] = [];
+  private wallFrontPositions: { x: number; y: number }[] = [];
 
   constructor(private scene: Phaser.Scene) {
     this.buildTilemap();
@@ -27,7 +32,7 @@ export class TilemapManager {
     // Seed a simple RNG for deterministic floor accent placement
     const rng = this.simpleRng(42);
 
-    // Build base data array (0 = floor, 1 = wall)
+    // Build base data array
     const isWall: boolean[][] = [];
     for (let row = 0; row < MAP_HEIGHT_TILES; row++) {
       isWall[row] = [];
@@ -49,33 +54,38 @@ export class TilemapManager {
       }
     }
 
-    // Generate tile data with tile classification
-    const data: number[][] = [];
+    // Generate separate floor and wall-top data arrays
+    const floorData: number[][] = [];
+    const wallTopData: number[][] = [];
+
     for (let row = 0; row < MAP_HEIGHT_TILES; row++) {
-      const rowData: number[] = [];
+      const floorRow: number[] = [];
+      const wallRow: number[] = [];
+
       for (let col = 0; col < MAP_WIDTH_TILES; col++) {
+        // Floor layer: always has a floor tile (even under walls)
+        if (rng() < 0.1) {
+          floorRow.push(3); // accent
+        } else {
+          floorRow.push(0); // standard floor
+        }
+
         if (isWall[row][col]) {
-          // Classify wall tile
           const belowIsFloor =
             row + 1 < MAP_HEIGHT_TILES && !isWall[row + 1][col];
 
           if (belowIsFloor) {
-            // South-facing wall edge — use wall-top (lighter, gives depth)
-            rowData.push(2);
+            wallRow.push(2); // wall-top (south-facing edge)
           } else {
-            // Standard wall tile
-            rowData.push(1);
+            wallRow.push(1); // standard wall
           }
         } else {
-          // Floor tile — scatter accent tiles (~10%)
-          if (rng() < 0.1) {
-            rowData.push(3);
-          } else {
-            rowData.push(0);
-          }
+          wallRow.push(-1); // empty (no wall here)
         }
       }
-      data.push(rowData);
+
+      floorData.push(floorRow);
+      wallTopData.push(wallRow);
     }
 
     // Collect wall positions for minimap
@@ -90,9 +100,25 @@ export class TilemapManager {
       }
     }
 
-    // Create Phaser tilemap from data
+    // Compute wall-front positions: every wall tile with a non-wall tile (or OOB) below it
+    for (let row = 0; row < MAP_HEIGHT_TILES; row++) {
+      for (let col = 0; col < MAP_WIDTH_TILES; col++) {
+        if (!isWall[row][col]) continue;
+        const belowRow = row + 1;
+        const belowIsWall = belowRow < MAP_HEIGHT_TILES && isWall[belowRow][col];
+        if (!belowIsWall) {
+          // Position = the tile just below the wall's bottom edge
+          this.wallFrontPositions.push({
+            x: col * TILE_SIZE,
+            y: belowRow * TILE_SIZE,
+          });
+        }
+      }
+    }
+
+    // Create Phaser tilemap for floor layer
     this.tilemap = this.scene.make.tilemap({
-      data,
+      data: floorData,
       tileWidth: TILE_SIZE,
       tileHeight: TILE_SIZE,
     });
@@ -106,11 +132,31 @@ export class TilemapManager {
       0
     )!;
 
-    this.wallLayer = this.tilemap.createLayer(0, tileset, 0, 0)!;
-    this.wallLayer.setDepth(-1);
+    // Floor layer (always behind everything)
+    this.floorLayer = this.tilemap.createLayer(0, tileset, 0, 0)!;
+    this.floorLayer.setDepth(-2);
+
+    // Wall-top layer: separate tilemap for walls only
+    const wallMap = this.scene.make.tilemap({
+      data: wallTopData,
+      tileWidth: TILE_SIZE,
+      tileHeight: TILE_SIZE,
+    });
+
+    const wallTileset = wallMap.addTilesetImage(
+      "tileset",
+      "tileset",
+      TILE_SIZE,
+      TILE_SIZE,
+      0,
+      0
+    )!;
+
+    this.wallTopLayer = wallMap.createLayer(0, wallTileset, 0, 0)!;
+    this.wallTopLayer.setDepth(-1);
 
     // Set collision on all wall tile indices (1, 2, 4, 5)
-    this.wallLayer.setCollision([1, 2, 4, 5]);
+    this.wallTopLayer.setCollision([1, 2, 4, 5]);
   }
 
   /** Simple seeded PRNG (mulberry32) for deterministic accent placement */
@@ -126,11 +172,16 @@ export class TilemapManager {
   }
 
   getWallLayer(): Phaser.Tilemaps.TilemapLayer {
-    return this.wallLayer;
+    return this.wallTopLayer;
   }
 
   getWallPositions(): { x: number; y: number }[] {
     return this.wallPositions;
+  }
+
+  /** Returns pixel positions for south-facing wall fronts (tile below wall's bottom edge) */
+  getWallFrontPositions(): { x: number; y: number }[] {
+    return this.wallFrontPositions;
   }
 
   getTilemap(): Phaser.Tilemaps.Tilemap {
