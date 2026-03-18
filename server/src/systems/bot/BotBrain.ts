@@ -10,7 +10,7 @@ import {
 import type { InputPayload } from "shared";
 
 const BOT_PATH_UPDATE_TICKS = 10;
-const BOT_STUCK_THRESHOLD_TICKS = 40;
+const BOT_STUCK_THRESHOLD_TICKS = 20; // ~1 second before unstick kicks in
 
 // Button bit constants (const enum values aren't available at runtime)
 const Button_INTERACT = 1 << 2;
@@ -59,6 +59,11 @@ export class BotBrain {
   private lastTargetX = 0;
   private lastTargetY = 0;
 
+  // Unstick: force random movement for N ticks after being stuck
+  private unstickTicksLeft = 0;
+  private unstickDx = 0;
+  private unstickDy = 0;
+
   constructor(botId: string, persona: BotPersona, state: GameStateSchema) {
     this.botId = botId;
     this.persona = persona;
@@ -82,12 +87,32 @@ export class BotBrain {
     this.lastPos.x = self.x;
     this.lastPos.y = self.y;
 
-    // If stuck for too long, clear path to force re-path
+    // If stuck for too long, force random movement to break free
     if (this.stuckTicks > BOT_STUCK_THRESHOLD_TICKS) {
       this.cachedPath = [];
       this.waypointIdx = 0;
       this.wanderTarget = null;
       this.stuckTicks = 0;
+      // Pick a random direction and force-move for 15 ticks
+      const angle = Math.random() * Math.PI * 2;
+      this.unstickDx = Math.cos(angle);
+      this.unstickDy = Math.sin(angle);
+      this.unstickTicksLeft = 15;
+    }
+
+    // If in unstick mode, override all AI with forced movement
+    if (this.unstickTicksLeft > 0) {
+      this.unstickTicksLeft--;
+      this.seq++;
+      return {
+        seq: this.seq,
+        tick,
+        dx: this.unstickDx,
+        dy: this.unstickDy,
+        aimAngle: Math.atan2(this.unstickDy, this.unstickDx),
+        buttons: 0,
+        dt: 1 / TICK_RATE,
+      };
     }
 
     // Periodically change strafe direction

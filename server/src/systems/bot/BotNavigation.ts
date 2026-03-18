@@ -41,6 +41,60 @@ function isWalkable(gx: number, gy: number): boolean {
   return navGrid[gy * GRID_W + gx];
 }
 
+// Pre-computed list of walkable tiles for fast random selection
+let walkableTiles: { gx: number; gy: number }[] | null = null;
+
+/** Build walkable tile list after nav grid is initialized */
+function ensureWalkableList(): void {
+  if (walkableTiles || !navGrid) return;
+  walkableTiles = [];
+  // Exclude perimeter (row/col 0 and 63) — those are walls
+  for (let gy = 2; gy < GRID_H - 2; gy++) {
+    for (let gx = 2; gx < GRID_W - 2; gx++) {
+      if (navGrid[gy * GRID_W + gx]) {
+        walkableTiles.push({ gx, gy });
+      }
+    }
+  }
+}
+
+/**
+ * Pick a random walkable tile in pixel coords, biased toward the map center.
+ * Uses rejection sampling with a center-weighted distribution.
+ */
+export function pickRandomWalkablePoint(): { x: number; y: number } {
+  ensureWalkableList();
+  if (!walkableTiles || walkableTiles.length === 0) {
+    // Fallback
+    return { x: MAP_WIDTH_TILES * TILE_SIZE / 2, y: MAP_HEIGHT_TILES * TILE_SIZE / 2 };
+  }
+
+  const centerGx = GRID_W / 2;
+  const centerGy = GRID_H / 2;
+  const maxDist = Math.sqrt(centerGx * centerGx + centerGy * centerGy);
+
+  // Try up to 10 candidates, pick the one closest to center
+  // This biases toward center without being deterministic
+  let bestTile = walkableTiles[Math.floor(Math.random() * walkableTiles.length)];
+  let bestCenterDist = Infinity;
+
+  const candidates = Math.min(8, walkableTiles.length);
+  for (let i = 0; i < candidates; i++) {
+    const tile = walkableTiles[Math.floor(Math.random() * walkableTiles.length)];
+    const dx = tile.gx - centerGx;
+    const dy = tile.gy - centerGy;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    // Weight: prefer tiles in the middle 60% of the map
+    const score = d + Math.random() * maxDist * 0.4; // add randomness so it's not always dead center
+    if (score < bestCenterDist) {
+      bestCenterDist = score;
+      bestTile = tile;
+    }
+  }
+
+  return gridToPixel(bestTile.gx, bestTile.gy);
+}
+
 /** Convert pixel coords to grid tile coords */
 export function pixelToGrid(px: number, py: number): { gx: number; gy: number } {
   return {

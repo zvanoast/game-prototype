@@ -1,6 +1,6 @@
 import type { BotPersona } from "./BotPersona";
 import type { BotPerceptionData } from "./BotPerception";
-import { hasLineOfSight, findPath, dist } from "./BotNavigation";
+import { hasLineOfSight, findPath, dist, pickRandomWalkablePoint } from "./BotNavigation";
 import {
   LOCKER_INTERACT_RANGE,
   MAX_HEALTH,
@@ -408,8 +408,12 @@ export const ActionOpenLocker: BotAction = {
     let move: { dx: number; dy: number };
 
     if (d <= LOCKER_INTERACT_RANGE) {
+      // Press interact and step back slightly so we don't get stuck at the locker
       buttons |= Button.INTERACT;
-      move = { dx: 0, dy: 0 };
+      move = moveAway(self, locker.x, locker.y);
+      // Gentle step back — don't flee at full speed
+      move.dx *= 0.5;
+      move.dy *= 0.5;
     } else {
       // Use pathfinding to reach locker
       move = followPath(ctx);
@@ -469,36 +473,109 @@ export const ActionUseConsumable: BotAction = {
 
   score(ctx: BotContext): number {
     const { persona, perception } = ctx;
-    if (!perception.hasConsumable) return 0;
+    // Q always uses slot1 first, so evaluate slot1
+    if (!perception.slot1) return 0;
 
-    const self = ctx.self;
-    const hasHealthPack = self.consumableSlot1 === "health_pack" || self.consumableSlot2 === "health_pack";
-    const hasBuff = self.consumableSlot1 === "speed_boost" || self.consumableSlot2 === "speed_boost" ||
-                    self.consumableSlot1 === "damage_boost" || self.consumableSlot2 === "damage_boost" ||
-                    self.consumableSlot1 === "shield" || self.consumableSlot2 === "shield";
-
-    // Use health pack when hurt
-    if (hasHealthPack && perception.healthPct < 0.6) {
-      return persona.selfPreservation * (1 - perception.healthPct) + 0.2;
-    }
-
-    // Use buffs when in combat
-    if (hasBuff && perception.nearestEnemy && perception.nearestEnemy.distance < 400) {
-      return persona.aggression * 0.5;
-    }
-
-    return 0;
+    return scoreConsumableUse(perception.slot1, persona, perception);
   },
 
   execute(ctx: BotContext): BotOutput {
-    return {
-      dx: 0,
-      dy: 0,
-      aimAngle: ctx.self.angle,
-      buttons: Button.USE_CONSUMABLE,
-    };
+    // Keep moving during consumable use (don't stand still)
+    const { self, perception } = ctx;
+    let dx = 0, dy = 0;
+    let aimAngle = self.angle;
+
+    // If in combat, keep facing the enemy
+    if (perception.nearestEnemy) {
+      const enemy = perception.nearestEnemy.player;
+      aimAngle = Math.atan2(enemy.y - self.y, enemy.x - self.x);
+
+      // Strafe while using consumable
+      const perpAngle = aimAngle + (Math.PI / 2) * ctx.strafeDir;
+      dx = Math.cos(perpAngle) * 0.5;
+      dy = Math.sin(perpAngle) * 0.5;
+    }
+
+    return { dx, dy, aimAngle, buttons: Button.USE_CONSUMABLE };
   },
 };
+
+/**
+ * Score how urgently the bot wants to use a specific consumable.
+ * Since Q always uses slot1, this evaluates whether NOW is the right time
+ * to consume what's in slot1. Each persona views items differently.
+ */
+function scoreConsumableUse(
+  consumableId: string,
+  persona: BotPersona,
+  perception: BotPerceptionData,
+): number {
+  switch (consumableId) {
+    case "health_pack": {
+      // Health pack: use when hurt. Cautious bots use earlier, aggressive bots wait longer.
+      const healThreshold = 0.35 + persona.selfPreservation * 0.35; // 0.35-0.70
+      if (perception.healthPct >= healThreshold) return 0;
+      // Score scales with how hurt we are
+      const urgency = (healThreshold - perception.healthPct) / healThreshold;
+      return 0.3 + urgency * 0.7; // 0.3-1.0 range
+    }
+
+    case "shield": {
+      // Shield: use if we have no/low shield. Always use if no shield at all.
+      // Don't waste if we already have significant shield HP.
+      if (perception.shieldHp >= 25) return 0; // already well-shielded
+      if (perception.shieldHp === 0) {
+        // No shield — high priority, especially for defensive bots
+        if (perception.inCombat) {
+          return 0.6 + persona.selfPreservation * 0.3;
+        }
+        // Use proactively if enemy is nearby (within 500px)
+        if (perception.nearestEnemy && perception.nearestEnemy.distance < 500) {
+          return 0.4 + persona.selfPreservation * 0.2;
+        }
+        // Defensive bots pop shield preemptively
+        if (persona.selfPreservation > 0.7) return 0.3;
+        return 0;
+      }
+      // Low shield — only refresh in combat
+      if (perception.inCombat && perception.shieldHp < 15) {
+        return 0.4;
+      }
+      return 0;
+    }
+
+    case "speed_boost": {
+      // Speed boost: use in combat for chasing or fleeing. Don't stack.
+      if (perception.hasSpeedBuff) return 0; // already active
+      if (perception.inCombat) {
+        // Aggressive bots use for chasing, defensive for fleeing
+        const combatValue = Math.max(persona.aggression, persona.selfPreservation);
+        return 0.3 + combatValue * 0.3;
+      }
+      // Use to close distance on a far enemy
+      if (perception.nearestEnemy && perception.nearestEnemy.distance > 400) {
+        return persona.aggression * 0.3;
+      }
+      return 0;
+    }
+
+    case "damage_boost": {
+      // Damage boost: only use when actively fighting. Aggressive bots love it.
+      if (perception.hasDamageBuff) return 0; // already active
+      if (perception.inCombat) {
+        return 0.3 + persona.aggression * 0.5;
+      }
+      // Aggressive bots pop it when enemy is approaching
+      if (perception.nearestEnemy && perception.nearestEnemy.distance < 400) {
+        return persona.aggression * 0.35;
+      }
+      return 0;
+    }
+
+    default:
+      return 0;
+  }
+}
 
 export const ActionWander: BotAction = {
   name: "Wander",
@@ -511,21 +588,20 @@ export const ActionWander: BotAction = {
     const { self } = ctx;
     const BOT_WANDER_INTERVAL_TICKS = 60;
 
-    if (!ctx.wanderTarget || ctx.tick - ctx.lastWanderTick > BOT_WANDER_INTERVAL_TICKS) {
-      const margin = 128;
-      ctx.wanderTarget = {
-        x: margin + Math.random() * (MAP_WIDTH_PX - margin * 2),
-        y: margin + Math.random() * (MAP_HEIGHT_PX - margin * 2),
-      };
+    // Pick a new wander target periodically, or when we've arrived
+    const needNewTarget = !ctx.wanderTarget
+      || ctx.tick - ctx.lastWanderTick > BOT_WANDER_INTERVAL_TICKS
+      || dist(self.x, self.y, ctx.wanderTarget.x, ctx.wanderTarget.y) < 32;
+
+    if (needNewTarget) {
+      ctx.wanderTarget = pickRandomWalkablePoint();
       ctx.lastWanderTick = ctx.tick;
+      // Clear cached path so pathfinding recalculates for the new target
+      ctx.cachedPath = [];
+      ctx.waypointIdx = 0;
     }
 
     const target = ctx.wanderTarget!;
-    const d = dist(self.x, self.y, target.x, target.y);
-
-    if (d < 32) {
-      return { dx: 0, dy: 0, aimAngle: self.angle, buttons: 0 };
-    }
 
     // Use pathfinding
     const move = followPath(ctx);

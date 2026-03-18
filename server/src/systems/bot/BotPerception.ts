@@ -39,6 +39,18 @@ export interface BotPerceptionData {
   hasConsumable: boolean;
   /** Number of alive players total */
   aliveCount: number;
+  /** What's in consumable slot 1 (will be used next on Q press) */
+  slot1: string;
+  /** What's in consumable slot 2 */
+  slot2: string;
+  /** Current shield HP */
+  shieldHp: number;
+  /** Whether we currently have a speed buff active */
+  hasSpeedBuff: boolean;
+  /** Whether we currently have a damage buff active */
+  hasDamageBuff: boolean;
+  /** Whether we're in combat (enemy within 300px) */
+  inCombat: boolean;
 }
 
 /** Build perception data for a bot */
@@ -59,6 +71,12 @@ export function perceive(
       hasMeleeUpgrade: false,
       hasConsumable: false,
       aliveCount: 0,
+      slot1: "",
+      slot2: "",
+      shieldHp: 0,
+      hasSpeedBuff: false,
+      hasDamageBuff: false,
+      inCombat: false,
     };
   }
 
@@ -103,9 +121,11 @@ export function perceive(
   }
   pickups.sort((a, b) => a.distance - b.distance);
 
+  const nearestEnemy = enemies.length > 0 ? enemies[0] : null;
+
   return {
     enemies,
-    nearestEnemy: enemies.length > 0 ? enemies[0] : null,
+    nearestEnemy,
     closedLockers,
     pickups,
     healthPct: self.health / maxHealth,
@@ -113,5 +133,11 @@ export function perceive(
     hasMeleeUpgrade: self.meleeWeaponId !== "fists",
     hasConsumable: !!self.consumableSlot1 || !!self.consumableSlot2,
     aliveCount,
+    slot1: self.consumableSlot1,
+    slot2: self.consumableSlot2,
+    shieldHp: self.shieldHp,
+    hasSpeedBuff: self.speedMultiplier > 1.01,
+    hasDamageBuff: self.damageMultiplier > 1.01,
+    inCombat: nearestEnemy !== null && nearestEnemy.distance < 300,
   };
 }
