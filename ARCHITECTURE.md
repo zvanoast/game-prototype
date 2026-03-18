@@ -230,14 +230,22 @@ Additional event messages:
 │  │ (80/443) │    │  ├── WebSocket (game rooms)  │    │
 │  │  + SSL   │    │  ├── express.static (client) │    │
 │  └─────────┘    │  ├── /api/health              │    │
-│                  │  └── /api/taken-characters    │    │
+│       │          │  └── /api/taken-characters    │    │
+│       │          └──────────────────────────────┘    │
+│       │                                              │
+│       │         ┌──────────────────────────────┐    │
+│       ├────────▶│  Test: test-zach (port 3002)  │    │
+│       │         └──────────────────────────────┘    │
+│       │         ┌──────────────────────────────┐    │
+│       └────────▶│  Test: test-keith (port 3003) │    │
 │                  └──────────────────────────────┘    │
 │                                                     │
 │  ┌──────────────────────────┐  ┌────────────────┐   │
 │  │  PM2 (process manager)   │  │  Docker         │   │
-│  │  └─ game-prototype       │  │  ├─ bangabot    │   │
-│  └──────────────────────────┘  │  └─ postgres    │   │
-│                                 └────────────────┘   │
+│  │  ├─ game-prototype       │  │  ├─ bangabot    │   │
+│  │  ├─ game-test-zach       │  │  └─ postgres    │   │
+│  │  └─ game-test-keith      │  └────────────────┘   │
+│  └──────────────────────────┘                       │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -247,6 +255,14 @@ Additional event messages:
 3. `scp` tarball to EC2 via `webfactory/ssh-agent`
 4. `ssh` into EC2: extract tarball → `npm ci` → `pm2 restart`
 5. Health check verifies server responds on `:3001/api/health`
+
+### Test Environment Deploy Flow
+1. Add label `deploy:test-zach` or `deploy:test-keith` to a PR
+2. Workflow checks no other open PR owns the label (conflict guard)
+3. Same build process as prod, deployed to `~/game-test-{name}/` on EC2
+4. PM2 process starts with `PORT=300X` env var (`SERVER_PORT` reads it at startup)
+5. Pushing new commits to a labeled PR auto-redeploys
+6. Removing the label or closing the PR stops the PM2 process
 
 ### Production URL Detection
 Client detects environment via `window.location`:

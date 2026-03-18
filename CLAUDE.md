@@ -79,7 +79,7 @@ storage-wars/
 
 ## Current Phase
 
-Character selection and production deployment complete. 9 phases of gameplay implemented. See `claude-progress.md` for full history.
+Character selection, production deployment, and test environment deployment complete. 9 phases of gameplay implemented. See `claude-progress.md` for full history.
 
 ## Development Commands
 
@@ -119,7 +119,24 @@ npm run start:prod      # Start server in production (tsx with tsconfig)
 - `EC2_SSH_KEY` — SSH private key (PEM)
 
 ### EC2 Setup Script
-`scripts/ec2-setup.sh` is idempotent — installs Node.js 20, PM2, nginx, certbot SSL. Only runs via manual workflow dispatch with `run_setup=true`. Safe to re-run.
+`scripts/ec2-setup.sh` is idempotent — installs Node.js 20, PM2, nginx, certbot SSL, and test subdomain nginx configs. Only runs via manual workflow dispatch with `run_setup=true`. Safe to re-run.
+
+### Test Environments
+Label-driven deploys for testing feature branches without merging to main.
+
+```
+test-zach.zachvanoast.com  → nginx → localhost:3002 → PM2 "game-test-zach"
+test-keith.zachvanoast.com → nginx → localhost:3003 → PM2 "game-test-keith"
+game.zachvanoast.com       → nginx → localhost:3001 → PM2 "game-prototype" (prod)
+```
+
+- **Workflow:** `.github/workflows/deploy-test.yml`
+- **Trigger:** Add label `deploy:test-zach` or `deploy:test-keith` to any PR
+- **Auto-redeploy:** Pushing new commits to a labeled PR triggers redeploy
+- **Teardown:** Removing the label or closing the PR stops the PM2 process
+- **Conflict guard:** Only one PR can own a given test env at a time
+- **Port config:** `SERVER_PORT` reads `process.env.PORT` (fallback 3001)
+- **Manual trigger:** `workflow_dispatch` with env name + branch inputs
 
 ### Production Architecture
 In production, the Colyseus server (port 3001) serves both:

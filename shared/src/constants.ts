@@ -96,6 +96,9 @@ export const DISMOUNT_PLAYER_SPEED_CAP = 480;    // cap so Jet Ski doesn't launc
 export const DISMOUNT_PLAYER_FRICTION = 200;     // low friction while sliding from dismount (vs normal 750)
 
 // --- Network ---
-export const SERVER_PORT = 3001;
+// Server reads PORT env var (for test environments on different ports); client ignores this.
+export const SERVER_PORT = typeof process !== "undefined" && process.env.PORT
+  ? Number(process.env.PORT)
+  : 3001;
 export const MAX_PLAYERS_PER_ROOM = 20;
 export const CHARACTER_COUNT = 9;

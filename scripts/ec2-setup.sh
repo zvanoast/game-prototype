@@ -4,6 +4,8 @@
 set -euo pipefail
 
 DOMAIN="game.zachvanoast.com"
+TEST_DOMAINS=("test-zach.zachvanoast.com" "test-keith.zachvanoast.com")
+TEST_PORTS=(3002 3003)
 APP_DIR="$HOME/game-prototype"
 NODE_MAJOR=20
 
@@ -58,6 +60,34 @@ EOF
 
 # Enable site (idempotent — ln -sf overwrites)
 sudo ln -sf /etc/nginx/sites-available/game-prototype /etc/nginx/sites-enabled/game-prototype
+
+# ── Test environment nginx configs ────────────────────────────────────────
+for i in "${!TEST_DOMAINS[@]}"; do
+  TEST_DOMAIN="${TEST_DOMAINS[$i]}"
+  TEST_PORT="${TEST_PORTS[$i]}"
+  CONF_NAME="game-${TEST_DOMAIN%%.*}"  # e.g. game-test-zach
+
+  echo "Configuring nginx for $TEST_DOMAIN → port $TEST_PORT..."
+  sudo tee "/etc/nginx/sites-available/$CONF_NAME" >/dev/null <<EOF
+server {
+    listen 80;
+    server_name $TEST_DOMAIN;
+
+    location / {
+        proxy_pass http://127.0.0.1:$TEST_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+  sudo ln -sf "/etc/nginx/sites-available/$CONF_NAME" "/etc/nginx/sites-enabled/$CONF_NAME"
+done
+
 sudo nginx -t && sudo systemctl reload nginx
 
 # ── Certbot SSL ────────────────────────────────────────────────────────────
@@ -83,5 +113,24 @@ else
     --register-unsafely-without-email \
     --keep-existing || true
 fi
+
+# ── SSL for test subdomains ───────────────────────────────────────────────
+for TEST_DOMAIN in "${TEST_DOMAINS[@]}"; do
+  if [ ! -d "/etc/letsencrypt/live/$TEST_DOMAIN" ]; then
+    echo "Provisioning SSL certificate for $TEST_DOMAIN..."
+    sudo certbot --nginx -d "$TEST_DOMAIN" \
+      --non-interactive \
+      --agree-tos \
+      --register-unsafely-without-email \
+      --redirect
+  else
+    echo "SSL certificate already exists for $TEST_DOMAIN"
+    sudo certbot --nginx -d "$TEST_DOMAIN" \
+      --non-interactive \
+      --agree-tos \
+      --register-unsafely-without-email \
+      --keep-existing || true
+  fi
+done
 
 echo "=== EC2 setup complete ==="

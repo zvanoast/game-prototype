@@ -380,3 +380,23 @@
 - On local player join: reads `player.characterIndex` from server; if different from requested, rebuilds player_sheet again
 - Remote players use `player.characterIndex` directly from schema (no more hash-based assignment)
 - Removed `getRemoteSkinIndex()` — uniqueness is enforced server-side
+
+## Test Environment Deployment — COMPLETE
+
+### Label-Driven Test Deploys
+- `.github/workflows/deploy-test.yml` — PR label-triggered workflow for deploying feature branches to named test environments
+- Two environments: `test-zach` (port 3002) and `test-keith` (port 3003) on the same EC2 instance
+- Add `deploy:test-zach` or `deploy:test-keith` label to a PR to deploy
+- Conflict guard: only one open PR can own a given test env label at a time
+- Auto-redeploy on `synchronize` (new commits pushed to labeled PR)
+- Teardown on label removal or PR close (`pm2 stop` + `pm2 delete`)
+- PR comment posted/updated with test URL after each deploy
+- Manual `workflow_dispatch` fallback with env name + branch selection
+
+### Configurable Server Port
+- `shared/src/constants.ts` — `SERVER_PORT` reads `process.env.PORT` with fallback to 3001
+- Only evaluated server-side; client continues using `window.location`
+
+### Infrastructure Changes
+- `scripts/ec2-setup.sh` — added nginx server blocks for `test-zach.zachvanoast.com` (→ 3002) and `test-keith.zachvanoast.com` (→ 3003), plus certbot SSL for both
+- DNS: Route 53 A records needed for `test-zach` and `test-keith` subdomains (one-time manual step)

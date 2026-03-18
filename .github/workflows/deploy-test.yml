@@ -1,0 +1,249 @@
+name: Deploy Test Environment
+
+on:
+  pull_request:
+    types: [labeled, synchronize, unlabeled, closed]
+  workflow_dispatch:
+    inputs:
+      env_name:
+        description: "Test environment name (e.g. test-zach, test-keith)"
+        required: true
+        type: choice
+        options:
+          - test-zach
+          - test-keith
+      branch:
+        description: "Branch to deploy"
+        required: true
+        type: string
+
+env:
+  DEPLOY_HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
+
+jobs:
+  resolve-env:
+    runs-on: ubuntu-latest
+    outputs:
+      env_name: ${{ steps.resolve.outputs.env_name }}
+      port: ${{ steps.resolve.outputs.port }}
+      action: ${{ steps.resolve.outputs.action }}
+    steps:
+      - name: Resolve environment from labels or inputs
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const envMap = {
+              'deploy:test-zach': { name: 'test-zach', port: '3002' },
+              'deploy:test-keith': { name: 'test-keith', port: '3003' },
+            };
+
+            // Manual dispatch
+            if (context.eventName === 'workflow_dispatch') {
+              const name = context.payload.inputs.env_name;
+              const port = name === 'test-zach' ? '3002' : '3003';
+              core.setOutput('env_name', name);
+              core.setOutput('port', port);
+              core.setOutput('action', 'deploy');
+              return;
+            }
+
+            const pr = context.payload.pull_request;
+            const labels = pr.labels.map(l => l.name);
+            const action = context.payload.action; // labeled, synchronize, unlabeled, closed
+
+            // On unlabel or close — check if we should teardown
+            if (action === 'unlabeled' || action === 'closed') {
+              let labelToRemove = null;
+              if (action === 'unlabeled') {
+                // The label that was just removed
+                labelToRemove = context.payload.label.name;
+              } else {
+                // PR closed — teardown any deploy labels it has
+                labelToRemove = labels.find(l => envMap[l]);
+              }
+
+              if (labelToRemove && envMap[labelToRemove]) {
+                core.setOutput('env_name', envMap[labelToRemove].name);
+                core.setOutput('port', envMap[labelToRemove].port);
+                core.setOutput('action', 'teardown');
+              } else {
+                core.setOutput('action', 'skip');
+              }
+              return;
+            }
+
+            // On labeled — deploy the newly added label
+            if (action === 'labeled') {
+              const addedLabel = context.payload.label.name;
+              if (!envMap[addedLabel]) {
+                core.info(`Label "${addedLabel}" is not a deploy label, skipping.`);
+                core.setOutput('action', 'skip');
+                return;
+              }
+              core.setOutput('env_name', envMap[addedLabel].name);
+              core.setOutput('port', envMap[addedLabel].port);
+              core.setOutput('action', 'deploy');
+              return;
+            }
+
+            // On synchronize (new push) — redeploy if a deploy label exists
+            if (action === 'synchronize') {
+              const deployLabel = labels.find(l => envMap[l]);
+              if (!deployLabel) {
+                core.info('No deploy label on this PR, skipping.');
+                core.setOutput('action', 'skip');
+                return;
+              }
+              core.setOutput('env_name', envMap[deployLabel].name);
+              core.setOutput('port', envMap[deployLabel].port);
+              core.setOutput('action', 'deploy');
+              return;
+            }
+
+            core.setOutput('action', 'skip');
+
+  conflict-check:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check no other PR owns this env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const envName = '${{ needs.resolve-env.outputs.env_name }}';
+            const label = `deploy:${envName}`;
+            const currentPR = context.payload.pull_request?.number || 0;
+
+            const { data: prs } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: label,
+              state: 'open',
+            });
+
+            const otherPRs = prs.filter(pr => pr.number !== currentPR && pr.pull_request);
+
+            if (otherPRs.length > 0) {
+              const prNumbers = otherPRs.map(pr => `#${pr.number}`).join(', ');
+              core.setFailed(`${envName} is already deployed by PR ${prNumbers}. Remove the "${label}" label from that PR first.`);
+            }
+
+  deploy:
+    needs: [resolve-env, conflict-check]
+    if: needs.resolve-env.outputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build client
+        run: npm run build:client
+
+      - name: Package deploy artifact
+        run: tar czf deploy.tar.gz client/dist client/package.json server shared package.json package-lock.json tsconfig.base.json scripts
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Configure SSH
+        run: |
+          echo -e "Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n  LogLevel ERROR" >> ~/.ssh/config
+
+      - name: Copy artifact to EC2
+        run: scp deploy.tar.gz ${{ env.DEPLOY_HOST }}:~/deploy-${{ needs.resolve-env.outputs.env_name }}.tar.gz
+
+      - name: Deploy to test environment
+        run: |
+          ssh ${{ env.DEPLOY_HOST }} << 'DEPLOY'
+            export PATH="/usr/local/bin:/usr/bin:$PATH"
+            ENV_NAME="${{ needs.resolve-env.outputs.env_name }}"
+            PORT="${{ needs.resolve-env.outputs.port }}"
+            APP_DIR="$HOME/game-${ENV_NAME}"
+
+            mkdir -p "$APP_DIR" && cd "$APP_DIR"
+            tar xzf "$HOME/deploy-${ENV_NAME}.tar.gz"
+            rm -f "$HOME/deploy-${ENV_NAME}.tar.gz"
+            npm ci
+
+            export PORT
+            pm2 restart "game-${ENV_NAME}" --update-env || pm2 start npm --name "game-${ENV_NAME}" -- run start:prod
+            pm2 save
+            sleep 5
+            pm2 ls
+            curl -sf "http://localhost:${PORT}/api/health" || { echo "--- PM2 LOGS ---"; pm2 logs "game-${ENV_NAME}" --nostream --lines 30; exit 1; }
+            echo "Deployed ${ENV_NAME} on port ${PORT}"
+          DEPLOY
+
+      - name: Post deploy URL
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const envName = '${{ needs.resolve-env.outputs.env_name }}';
+            const url = `https://${envName}.zachvanoast.com`;
+            const body = `🚀 Deployed to test environment: **[${url}](${url})**`;
+
+            // Check if we already commented
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            const existing = comments.find(c => c.body.includes(url));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body + `\n\n_Updated: ${new Date().toISOString()}_`,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body,
+              });
+            }
+
+  teardown:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.action == 'teardown'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Configure SSH
+        run: |
+          echo -e "Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n  LogLevel ERROR" >> ~/.ssh/config
+
+      - name: Stop test environment
+        run: |
+          ssh ${{ env.DEPLOY_HOST }} << 'TEARDOWN'
+            export PATH="/usr/local/bin:/usr/bin:$PATH"
+            ENV_NAME="${{ needs.resolve-env.outputs.env_name }}"
+            pm2 stop "game-${ENV_NAME}" || true
+            pm2 delete "game-${ENV_NAME}" || true
+            pm2 save
+            echo "Stopped ${ENV_NAME}"
+          TEARDOWN
