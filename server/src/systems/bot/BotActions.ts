@@ -129,6 +129,116 @@ function getMeleeRange(self: PlayerSchema): number {
   return cfg?.meleeRange ?? 32;
 }
 
+/** Rough DPS score for a melee weapon */
+function meleeDps(cfg: { meleeDamage?: number; meleeCooldownMs?: number }): number {
+  return (cfg.meleeDamage ?? 8) / ((cfg.meleeCooldownMs ?? 300) / 1000);
+}
+
+/** Rough value score for a ranged weapon (damage * ammo) */
+function rangedValue(cfg: { damage?: number; maxAmmo?: number }, ammo?: number): number {
+  const a = ammo != null && ammo >= 0 ? ammo : (cfg.maxAmmo ?? 0);
+  return (cfg.damage ?? 8) * a;
+}
+
+interface RatedPickup {
+  nearby: import("./BotPerception").NearbyPickup;
+  distance: number;
+  value: number; // 0-1 desirability
+}
+
+/**
+ * Evaluate all visible pickups and return the most desirable one.
+ * Considers: current equipment, weapon quality, persona preferences, distance.
+ */
+function findBestPickup(ctx: BotContext): RatedPickup | null {
+  const { self, persona, perception } = ctx;
+  if (perception.pickups.length === 0) return null;
+
+  let best: RatedPickup | null = null;
+
+  for (const np of perception.pickups) {
+    // Skip pickups too far away to consider
+    if (np.distance > 600) continue;
+
+    let value = 0;
+    const pickup = np.pickup;
+
+    if (pickup.consumableId) {
+      // Consumables: only valuable if we have a free slot
+      if (!perception.hasConsumable) {
+        value = 0.25;
+        // Health packs more valuable when hurt
+        if (pickup.consumableId === "health_pack" && perception.healthPct < 0.6) {
+          value = 0.5;
+        }
+      } else {
+        value = 0; // both slots full — skip
+      }
+    } else if (pickup.weaponId) {
+      const cfg = getWeaponConfig(pickup.weaponId);
+      if (!cfg) continue;
+
+      if (cfg.slot === "melee") {
+        if (self.meleeWeaponId === "fists") {
+          // Any melee weapon is a big upgrade from fists
+          value = 0.5 + persona.meleePreference * 0.3;
+        } else {
+          // Compare to current melee
+          const currentCfg = getWeaponConfig(self.meleeWeaponId);
+          if (currentCfg) {
+            const currentDps = meleeDps(currentCfg);
+            const newDps = meleeDps(cfg);
+            if (newDps > currentDps) {
+              value = 0.3 * (newDps / currentDps - 1) + persona.meleePreference * 0.15;
+            } else {
+              value = 0; // downgrade — skip
+            }
+          } else {
+            value = 0.3;
+          }
+        }
+      } else if (cfg.slot === "ranged") {
+        const rangedPref = 1 - persona.meleePreference; // higher = prefers ranged
+
+        if (!perception.hasRanged) {
+          // No ranged weapon — very high value, especially for ranged-focused bots
+          value = 0.6 + rangedPref * 0.3;
+        } else {
+          // Compare to current ranged
+          const currentCfg = getWeaponConfig(self.rangedWeaponId);
+          if (currentCfg) {
+            const currentVal = rangedValue(currentCfg, self.rangedAmmo);
+            const newAmmo = pickup.ammo >= 0 ? pickup.ammo : (cfg.maxAmmo ?? 0);
+            const newVal = rangedValue(cfg, newAmmo);
+            if (newVal > currentVal) {
+              value = 0.3 * Math.min(1, newVal / Math.max(1, currentVal) - 1) + rangedPref * 0.15;
+            } else if (self.rangedAmmo <= 2) {
+              // Almost out of ammo — any ranged weapon is tempting
+              value = 0.3;
+            } else {
+              value = 0; // downgrade — skip
+            }
+          } else {
+            value = 0.4;
+          }
+        }
+      }
+    }
+
+    if (value <= 0) continue;
+
+    // Weight by distance — closer pickups are more attractive
+    const distWeight = Math.max(0.1, 1 - np.distance / 600);
+    const finalScore = value * distWeight;
+
+    if (!best || finalScore > best.value * Math.max(0.1, 1 - best.distance / 600)) {
+      best = { nearby: np, distance: np.distance, value };
+    }
+  }
+
+  return best;
+}
+
 // --- Actions ---
 
 export const ActionAttackEnemy: BotAction = {
@@ -155,17 +265,25 @@ export const ActionAttackEnemy: BotAction = {
     const target = enemy.player;
     const d = enemy.distance;
 
-    // Decide melee vs ranged based on weapon availability and preference
-    const useMelee = !perception.hasRanged || (persona.meleePreference > 0.5 && d < 120);
+    // Decide melee vs ranged based on weapon availability, preference, and distance
+    // Always prefer ranged if we have it, unless we're a melee-focused bot AND already close
+    let useMelee = true;
+    if (perception.hasRanged) {
+      const meleeRange = getMeleeRange(self);
+      // Use melee only if: strong melee preference AND already in melee range
+      useMelee = persona.meleePreference > 0.7 && d < meleeRange * 1.5;
+    }
 
     let buttons = 0;
     let dx = 0, dy = 0;
 
-    // Get projectile speed for aim leading
+    // Get ranged weapon stats for aim leading and range management
     let projSpeed = 550;
+    let weaponRange = 500;
     if (!useMelee && self.rangedWeaponId) {
       const cfg = getWeaponConfig(self.rangedWeaponId);
       if (cfg?.projectileSpeed) projSpeed = cfg.projectileSpeed;
+      if (cfg?.projectileRange) weaponRange = cfg.projectileRange;
     }
 
     const aimAngle = aimAt(
@@ -197,28 +315,30 @@ export const ActionAttackEnemy: BotAction = {
         buttons |= Button.MELEE;
       }
     } else {
-      // Ranged: maintain preferred distance with forward/back bias in strafe
+      // Ranged: use weapon's actual range to determine ideal distance
+      // Stay at ~60-80% of weapon range for a safety margin
+      const idealRange = Math.min(weaponRange * 0.7, persona.preferredRange);
       const toward = canSee ? moveToward(self, target.x, target.y) : followPath(ctx);
       const perpAngle = aimAngle + (Math.PI / 2) * ctx.strafeDir;
 
-      if (d < persona.preferredRange * 0.6) {
+      if (d < idealRange * 0.5) {
         // Too close — mostly back away, slight strafe
         const away = moveAway(self, target.x, target.y);
         dx = away.dx * 0.8 + Math.cos(perpAngle) * 0.2;
         dy = away.dy * 0.8 + Math.sin(perpAngle) * 0.2;
-      } else if (d > persona.preferredRange * 1.3) {
-        // Too far — chase with slight strafe
+      } else if (d > weaponRange * 0.85) {
+        // Beyond effective range — close in aggressively
         dx = toward.dx * 0.85 + Math.cos(perpAngle) * 0.15;
         dy = toward.dy * 0.85 + Math.sin(perpAngle) * 0.15;
       } else {
-        // In range band — strafe but drift inward slightly to stay aggressive
-        const inwardBias = d > persona.preferredRange ? 0.3 : -0.15;
+        // In effective range — strafe with slight inward drift
+        const inwardBias = d > idealRange ? 0.25 : -0.1;
         dx = toward.dx * inwardBias + Math.cos(perpAngle) * 0.6;
         dy = toward.dy * inwardBias + Math.sin(perpAngle) * 0.6;
       }
 
-      // Shoot when we can see the target
-      if (canSee) {
+      // Shoot when we can see the target and within weapon range
+      if (canSee && d < weaponRange * 0.95) {
         buttons |= Button.ATTACK;
       }
     }
@@ -315,34 +435,24 @@ export const ActionCollectPickup: BotAction = {
     const { persona, perception } = ctx;
     if (perception.pickups.length === 0) return 0;
 
-    const nearest = perception.pickups[0];
-    const distFactor = Math.max(0, 1 - nearest.distance / 500);
+    // Find the best pickup to pursue (not just nearest)
+    const best = findBestPickup(ctx);
+    if (!best) return 0;
 
-    // Very high value for ranged weapons when we don't have one
-    const isRangedWeapon = !!nearest.pickup.weaponId && getWeaponConfig(nearest.pickup.weaponId)?.slot === "ranged";
-    const isMeleeWeapon = !!nearest.pickup.weaponId && getWeaponConfig(nearest.pickup.weaponId)?.slot === "melee";
-    const isConsumable = !!nearest.pickup.consumableId;
-
-    let upgradeBonus = 0;
-    if (isRangedWeapon && !perception.hasRanged) {
-      upgradeBonus = 0.7; // Ranged weapon when unarmed — very high priority
-    } else if (isMeleeWeapon && !perception.hasMeleeUpgrade) {
-      upgradeBonus = 0.4;
-    } else if (isConsumable && !perception.hasConsumable) {
-      upgradeBonus = 0.2;
-    }
+    const distFactor = Math.max(0, 1 - best.distance / 500);
 
     // Close pickups are almost free to grab
-    const proximityBonus = nearest.distance < 80 ? 0.3 : 0;
+    const proximityBonus = best.distance < 80 ? 0.3 : 0;
 
-    return persona.lootPriority * (0.2 + upgradeBonus) * distFactor + proximityBonus + upgradeBonus * 0.2;
+    return persona.lootPriority * (0.2 + best.value) * distFactor + proximityBonus + best.value * 0.2;
   },
 
   execute(ctx: BotContext): BotOutput {
-    const { self, perception } = ctx;
-    const nearest = perception.pickups[0];
-    const pickup = nearest.pickup;
+    const { self } = ctx;
+    const best = findBestPickup(ctx);
+    if (!best) return { dx: 0, dy: 0, aimAngle: self.angle, buttons: 0 };
 
+    const pickup = best.nearby.pickup;
     const move = moveToward(self, pickup.x, pickup.y);
 
     return {

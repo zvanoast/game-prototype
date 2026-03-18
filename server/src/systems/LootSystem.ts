@@ -11,7 +11,7 @@ import {
   CONSUMABLE_SPAWN_CHANCE,
   SANDBOX_RESPAWN_TIME_MS,
 } from "shared";
-import { WeaponId, ConsumableId } from "shared";
+import { WeaponId, ConsumableId, BOT_SESSION_PREFIX } from "shared";
 import type { WeaponConfig } from "shared";
 import {
   LOCKER_SLOTS,
@@ -165,9 +165,81 @@ export class LootSystem {
     }
   }
 
-  /** Update current tick (called each server tick) */
+  /** Update current tick and auto-collect pickups for bots */
   tickPickups(tick: number) {
     this.currentTick = tick;
+
+    // Auto-collect pickups for bots (they can't click)
+    this.state.players.forEach((player: PlayerSchema, sessionId: string) => {
+      if (!sessionId.startsWith(BOT_SESSION_PREFIX)) return;
+      if (player.state === "dead") return;
+
+      for (let i = this.state.pickups.length - 1; i >= 0; i--) {
+        const pickup = this.state.pickups.at(i);
+        if (!pickup) continue;
+
+        // Check immunity
+        const spawnTick = this.pickupSpawnTick.get(pickup.id) ?? 0;
+        if (this.currentTick - spawnTick < PICKUP_IMMUNITY_TICKS) continue;
+
+        // Check proximity
+        const dx = player.x - pickup.x;
+        const dy = player.y - pickup.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > PICKUP_INTERACT_RANGE) continue;
+
+        // Only pick up if it's an upgrade (or consumable with a free slot)
+        if (!this.isBotUpgrade(sessionId, pickup)) continue;
+
+        this.processPickupClick(sessionId, pickup.id);
+        break; // one pickup per tick per bot
+      }
+    });
+  }
+
+  /**
+   * Evaluate whether a pickup is worth collecting for a bot.
+   * Bots have game knowledge with slight imperfection (like a real player).
+   */
+  private isBotUpgrade(sessionId: string, pickup: PickupSchema): boolean {
+    const equip = this.playerEquipment.get(sessionId);
+    if (!equip) return true;
+
+    // Consumables: pick up if we have a free slot
+    if (pickup.consumableId) {
+      return !equip.consumableSlot1 || !equip.consumableSlot2;
+    }
+
+    const newWeapon = getWeaponConfig(pickup.weaponId);
+    if (!newWeapon) return false;
+
+    if (newWeapon.slot === "melee") {
+      // Always upgrade from Fists
+      if (equip.meleeWeaponId === WeaponId.Fists) return true;
+      // Compare DPS: damage / cooldown
+      const current = getWeaponConfig(equip.meleeWeaponId);
+      if (!current) return true;
+      const currentDps = (current.meleeDamage ?? 8) / (current.meleeCooldownMs ?? 300);
+      const newDps = (newWeapon.meleeDamage ?? 8) / (newWeapon.meleeCooldownMs ?? 300);
+      // Pick up if better DPS (with 10% "human error" threshold — sometimes swap for equal)
+      return newDps > currentDps * 0.9;
+    }
+
+    if (newWeapon.slot === "ranged") {
+      // Always pick up ranged if we don't have one
+      if (!equip.rangedWeaponId) return true;
+      // Out of ammo on current — always swap
+      if (equip.rangedAmmo <= 0) return true;
+      // Compare damage output: damage * ammo as rough "total value"
+      const current = getWeaponConfig(equip.rangedWeaponId);
+      if (!current) return true;
+      const currentValue = (current.damage ?? 8) * equip.rangedAmmo;
+      const newAmmo = pickup.ammo >= 0 ? pickup.ammo : (newWeapon.maxAmmo ?? 0);
+      const newValue = (newWeapon.damage ?? 8) * newAmmo;
+      return newValue > currentValue * 0.85;
+    }
+
+    return false;
   }
 
   /** Player clicked a pickup — validate distance and equip */
