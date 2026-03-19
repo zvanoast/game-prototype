@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "process-sprites": "tsx scripts/process-sprites.ts",
+    "pack-atlas": "tsx scripts/pack-atlas.ts"
   },
   "dependencies": {
     "colyseus.js": "^0.15.25",
@@ -14,6 +16,7 @@
     "shared": "*"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^0.1.62",
     "typescript": "^5.7.3",
     "vite": "^6.1.0"
   }

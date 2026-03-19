@@ -1,6 +1,8 @@
 import Phaser from "phaser";
 import { CHARACTER_DEFS, buildPlayerSheet } from "./BootScene";
 import { NetworkManager } from "../network/NetworkManager";
+import { SpriteRegistry } from "../sprites/SpriteRegistry";
+import { DirectionalAnimator, angleToDir4 } from "../sprites/DirectionalAnimator";
 import { DebugOverlay } from "../ui/DebugOverlay";
 import { Minimap } from "../ui/Minimap";
 import { WeaponHud } from "../ui/WeaponHud";
@@ -78,6 +80,11 @@ export class GameScene extends Phaser.Scene {
   private hitStop!: HitStop;
   private particles!: ParticleManager;
   private soundManager!: SoundManager;
+
+  // Sprite system
+  private spriteRegistry!: SpriteRegistry;
+  private localAnimator: DirectionalAnimator | null = null;
+  private remoteAnimators = new Map<string, DirectionalAnimator>();
 
   // Input
   private keys!: {
@@ -258,6 +265,11 @@ export class GameScene extends Phaser.Scene {
     this.localPlayerShadow = null;
     this.remoteShadows.clear();
     this.vehicleShadows.clear();
+    this.localAnimator = null;
+    this.remoteAnimators.clear();
+
+    // Initialize sprite registry
+    this.spriteRegistry = new SpriteRegistry(this);
 
     // Rebuild player_sheet from chosen character (destroys old texture, re-registers frames)
     const chosenFrame = CHARACTER_DEFS[this.characterIndex]?.frame ?? CHARACTER_DEFS[0].frame;
@@ -454,10 +466,17 @@ export class GameScene extends Phaser.Scene {
     this.localPlayerShadow.setDepth(y - 1);
     this.localPlayerShadow.setAlpha(0.3);
 
-    this.localPlayer = this.physics.add.sprite(x, y, "player_sheet");
+    const charRef = this.spriteRegistry.getCharacterSprite(this.characterIndex);
+    this.localPlayer = this.physics.add.sprite(x, y, charRef.key, charRef.frame);
     this.localPlayer.setOrigin(0.5, 0.5);
     this.localPlayer.setDepth(y); // Y-sorted depth
-    this.localPlayer.play("player_idle");
+
+    // Create directional animator for local player
+    this.localAnimator = new DirectionalAnimator(this.localPlayer, this.spriteRegistry, this.characterIndex);
+    if (!this.localAnimator.isDirectional) {
+      // Fallback: use legacy animation
+      this.localPlayer.play("player_idle");
+    }
 
     // Circular physics body (kept for overlap detection, not for movement)
     const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
@@ -600,12 +619,19 @@ export class GameScene extends Phaser.Scene {
         } else {
           // Use server-assigned character's spritesheet for remote player
           const charIdx = player.characterIndex ?? 0;
-          const sheetKey = `player_sheet_${charIdx}`;
-          const hasSheet = this.textures.exists(sheetKey);
-          const sprite = this.add.sprite(player.x, player.y, hasSheet ? sheetKey : "player_sheet");
+          const remoteRef = this.spriteRegistry.getCharacterSprite(charIdx);
+          const sprite = this.add.sprite(player.x, player.y, remoteRef.key, remoteRef.frame);
           sprite.setOrigin(0.5, 0.5);
           sprite.setDepth(player.y); // Y-sorted depth
-          sprite.play(hasSheet ? `player_idle_${charIdx}` : "player_idle");
+
+          // Create directional animator for remote player
+          const remoteAnimator = new DirectionalAnimator(sprite, this.spriteRegistry, charIdx);
+          this.remoteAnimators.set(sessionId, remoteAnimator);
+          if (!remoteAnimator.isDirectional) {
+            const sheetKey = `player_sheet_${charIdx}`;
+            const hasSheet = this.textures.exists(sheetKey);
+            sprite.play(hasSheet ? `player_idle_${charIdx}` : "player_idle");
+          }
           this.remoteCharIndices.set(sessionId, charIdx);
           this.remotePlayers.set(sessionId, sprite);
 
@@ -669,7 +695,11 @@ export class GameScene extends Phaser.Scene {
             // Handle local player death state from server
             if (player.state === "dead" && this.localPlayer) {
               this.localPlayer.setAlpha(0.3);
-              this.localPlayer.play("player_death", true);
+              if (this.localAnimator && this.localAnimator.isDirectional) {
+                this.localAnimator.update(0, "dead", false);
+              } else {
+                this.localPlayer.play("player_death", true);
+              }
             }
 
             // Enter spectator mode when eliminated during play
@@ -709,6 +739,7 @@ export class GameScene extends Phaser.Scene {
           this.remoteShadows.delete(sessionId);
         }
         this.remoteCharIndices.delete(sessionId);
+        this.remoteAnimators.delete(sessionId);
         this.playerNames.delete(sessionId);
 
         // If spectating this player, cycle to next
@@ -742,10 +773,10 @@ export class GameScene extends Phaser.Scene {
         const consumable = isConsumable ? getConsumableConfig(pickup.consumableId) : null;
         const color = isConsumable ? (consumable?.color ?? 0xffffff) : (weapon?.color ?? 0xffffff);
 
-        const pickupTexKey = isConsumable
-          ? this.getConsumablePickupTexture(pickup.consumableId)
-          : this.getPickupTexture(pickup.weaponId);
-        const sprite = this.add.sprite(0, 0, pickupTexKey);
+        const pickupRef = isConsumable
+          ? this.spriteRegistry.getConsumablePickupFrame(pickup.consumableId)
+          : this.spriteRegistry.getPickupFrame(pickup.weaponId);
+        const sprite = this.add.sprite(0, 0, pickupRef.key, pickupRef.frame);
         sprite.setTint(color);
         sprite.setOrigin(0.5, 0.5);
 
@@ -821,10 +852,8 @@ export class GameScene extends Phaser.Scene {
       // --- Vehicles ---
       room.state.vehicles.onAdd((vehicle: any, _key: number) => {
         const config = getVehicleConfig(vehicle.vehicleId);
-        const texKey = this.textures.exists(`vehicle_${vehicle.vehicleId}`)
-          ? `vehicle_${vehicle.vehicleId}`
-          : "pickup";
-        const sprite = this.add.sprite(0, 0, texKey);
+        const vehicleRef = this.spriteRegistry.getVehicleFrame(vehicle.vehicleId, "down");
+        const sprite = this.add.sprite(0, 0, vehicleRef.key, vehicleRef.frame);
         sprite.setOrigin(0.5, 0.5);
 
         // Name label below sprite
@@ -890,8 +919,8 @@ export class GameScene extends Phaser.Scene {
 
       // Listen for server projectile state changes
       room.state.projectiles.onAdd((proj: any, _key: number) => {
-        const texKey = this.getProjectileTexture(proj.weaponId ?? "");
-        const sprite = this.add.sprite(proj.x, proj.y, texKey);
+        const projRef = this.spriteRegistry.getProjectileFrame(proj.weaponId ?? "");
+        const sprite = this.add.sprite(proj.x, proj.y, projRef.key, projRef.frame);
         sprite.setDepth(proj.y); // Y-sorted
         sprite.setOrigin(0.5, 0.5);
         // Set initial rotation to face travel direction
@@ -1260,7 +1289,11 @@ export class GameScene extends Phaser.Scene {
           this.localPlayer.setRotation(vTarget.angle);
         }
       } else {
-        this.localPlayer.setRotation(aimAngle);
+        if (this.localAnimator && this.localAnimator.isDirectional) {
+          // Directional sprites handle facing via animation, no rotation
+        } else {
+          this.localPlayer.setRotation(aimAngle);
+        }
       }
 
       // Combat aim
@@ -1341,16 +1374,26 @@ export class GameScene extends Phaser.Scene {
       }
 
       // Animate local player
-      if (dashState) {
-        this.localPlayer.play("player_walk", true);
-      } else if (this.localMountedVehicleId > 0 || dx !== 0 || dy !== 0) {
-        this.localPlayer.play("player_walk", true);
+      if (this.localAnimator && this.localAnimator.isDirectional) {
+        // Directional animator handles animation selection based on state + angle
+        const playerState = dashState ? "dashing" : (dx !== 0 || dy !== 0 || this.localMountedVehicleId > 0) ? "moving" : "idle";
+        this.localAnimator.update(aimAngle, playerState, false);
       } else {
-        this.localPlayer.play("player_idle", true);
+        if (dashState) {
+          this.localPlayer.play("player_walk", true);
+        } else if (this.localMountedVehicleId > 0 || dx !== 0 || dy !== 0) {
+          this.localPlayer.play("player_walk", true);
+        } else {
+          this.localPlayer.play("player_idle", true);
+        }
       }
     } else if (this.localPlayer && !isDead && movementFrozen) {
       // Frozen but alive — show idle animation
-      this.localPlayer.play("player_idle", true);
+      if (this.localAnimator && this.localAnimator.isDirectional) {
+        this.localAnimator.update(aimAngle, "idle", false);
+      } else {
+        this.localPlayer.play("player_idle", true);
+      }
       this.localPlayer.setAlpha(1);
     }
 
@@ -1405,24 +1448,36 @@ export class GameScene extends Phaser.Scene {
         const lerpFactor = 0.15;
         sprite.x = Phaser.Math.Linear(sprite.x, target.x, lerpFactor);
         sprite.y = Phaser.Math.Linear(sprite.y, target.y, lerpFactor);
-        sprite.setRotation(target.angle);
 
-        // Death state: fade out + death animation (use per-character anims)
-        const ci = this.remoteCharIndices.get(sessionId) ?? 0;
-        const hasCharAnims = this.anims.exists(`player_idle_${ci}`);
-        const idleKey = hasCharAnims ? `player_idle_${ci}` : "player_idle";
-        const walkKey = hasCharAnims ? `player_walk_${ci}` : "player_walk";
-        const deathKey = hasCharAnims ? `player_death_${ci}` : "player_death";
-
-        if (target.state === "dead") {
-          sprite.setAlpha(0.3);
-          sprite.play(deathKey, true);
-        } else if (target.state === "moving") {
-          sprite.setAlpha(1);
-          sprite.play(walkKey, true);
+        // Use directional animator if available, else legacy rotation + anims
+        const remoteAnim = this.remoteAnimators.get(sessionId);
+        if (remoteAnim && remoteAnim.isDirectional) {
+          remoteAnim.update(target.angle, target.state);
+          if (target.state === "dead") {
+            sprite.setAlpha(0.3);
+          } else {
+            sprite.setAlpha(1);
+          }
         } else {
-          sprite.setAlpha(1);
-          sprite.play(idleKey, true);
+          sprite.setRotation(target.angle);
+
+          // Death state: fade out + death animation (use per-character anims)
+          const ci = this.remoteCharIndices.get(sessionId) ?? 0;
+          const hasCharAnims = this.anims.exists(`player_idle_${ci}`);
+          const idleKey = hasCharAnims ? `player_idle_${ci}` : "player_idle";
+          const walkKey = hasCharAnims ? `player_walk_${ci}` : "player_walk";
+          const deathKey = hasCharAnims ? `player_death_${ci}` : "player_death";
+
+          if (target.state === "dead") {
+            sprite.setAlpha(0.3);
+            sprite.play(deathKey, true);
+          } else if (target.state === "moving") {
+            sprite.setAlpha(1);
+            sprite.play(walkKey, true);
+          } else {
+            sprite.setAlpha(1);
+            sprite.play(idleKey, true);
+          }
         }
 
         // Y-sorted depth

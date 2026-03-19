@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { CHARACTER_DEFS } from "./BootScene";
+import { SpriteRegistry } from "../sprites/SpriteRegistry";
 
 const STORAGE_KEY = "storage_wars_nickname";
 const CHAR_STORAGE_KEY = "storage_wars_character";
@@ -128,15 +129,16 @@ export class MenuScene extends Phaser.Scene {
       color: "#ffcc00",
     }).setOrigin(0.5, 0.5);
 
+    const menuRegistry = new SpriteRegistry(this);
     for (let i = 0; i < CHARACTER_DEFS.length; i++) {
       const px = startX + i * (previewSize + gap);
-      const texKey = `char_preview_${i}`;
-      if (!this.textures.exists(texKey)) {
+      const previewRef = menuRegistry.getPreviewFrame(i);
+      if (!this.textures.exists(previewRef.key)) {
         this.charSprites.push(null as any); // placeholder to keep index alignment
         continue;
       }
 
-      const sprite = this.add.sprite(px, charY, texKey);
+      const sprite = this.add.sprite(px, charY, previewRef.key, previewRef.frame);
       sprite.setOrigin(0.5, 0.5);
       sprite.setDepth(1);
       sprite.setInteractive({ useHandCursor: true });
@@ -364,13 +366,14 @@ export class MenuScene extends Phaser.Scene {
       this.lobbyCountText.setText(`${count} player${count > 1 ? "s" : ""} waiting`);
     }
 
+    const lobbyRegistry = new SpriteRegistry(this);
     for (let i = 0; i < this.lobbyPlayers.length; i++) {
       const p = this.lobbyPlayers[i];
       const y = i * 30;
 
-      const texKey = `char_preview_${p.characterIndex}`;
-      if (this.textures.exists(texKey)) {
-        const icon = this.add.sprite(12, y, texKey).setDisplaySize(24, 24).setOrigin(0.5, 0.5);
+      const lobbyPreviewRef = lobbyRegistry.getPreviewFrame(p.characterIndex);
+      if (this.textures.exists(lobbyPreviewRef.key)) {
+        const icon = this.add.sprite(12, y, lobbyPreviewRef.key, lobbyPreviewRef.frame).setDisplaySize(24, 24).setOrigin(0.5, 0.5);
         this.lobbyContainer.add(icon);
       }
 

@@ -147,6 +147,33 @@ In production, the Colyseus server (port 3001) serves both:
 
 Client auto-detects dev vs prod environment via `window.location` to derive WebSocket (`ws://` vs `wss://`) and REST API URLs.
 
+## Sprite Asset Pipeline
+
+The game supports an extensible sprite system with procedural fallback. Generated art assets are optional -- when atlases are missing, the game falls back to existing procedural textures.
+
+### Architecture
+
+- **`client/src/sprites/SpriteManifest.ts`** -- Types and frame-name conventions for all sprite categories (characters, items, vehicles, environment). Single source of truth for mapping entity IDs to atlas frame names.
+- **`client/src/sprites/SpriteRegistry.ts`** -- Runtime lookup layer. Checks if generated atlases are loaded; if yes, returns atlas frame references. If no, falls back to procedural textures (pickup_X, proj_default, vehicle_X, player_sheet, etc).
+- **`client/src/sprites/DirectionalAnimator.ts`** -- Converts continuous aim angle to 4-direction animation selection. When generated character atlases are available, sprites stay upright with direction conveyed by art. When missing, falls back to legacy single-direction sprites with rotation.
+
+### Frame Naming Conventions
+
+- Characters: `char_{index}_{state}_{dir}_{frame}` (e.g., `char_0_walk_down_2`)
+- Pickups: `pickup_{weaponId}` or `pickup_{consumableId}`
+- Projectiles: `proj_{weaponId}`
+- Vehicles: `vehicle_{vehicleId}_{dir}`
+- Environment: `env_{name}`
+
+### Generated Atlas Loading
+
+BootScene loads optional atlases from `assets/generated/atlases/`. If files are missing, load errors are silently suppressed. The SpriteRegistry detects which atlases loaded successfully and routes lookups accordingly.
+
+### Scripts
+
+- `npm run process-sprites --prefix client` -- Process raw sprite art into standardized frames
+- `npm run pack-atlas --prefix client` -- Pack processed frames into atlas sheets
+
 ## Debug Tools
 
 When implementing features, always include corresponding debug overlays that can be toggled with backtick (`). Current debug overlays:

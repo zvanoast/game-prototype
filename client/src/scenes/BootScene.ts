@@ -1,5 +1,7 @@
 import Phaser from "phaser";
 import { TILE_SIZE, PLAYER_RADIUS, ALL_VEHICLE_IDS, getVehicleConfig } from "shared";
+import { ATLAS_KEYS, ATLAS_PATHS } from "../sprites/SpriteManifest";
+import { SpriteRegistry } from "../sprites/SpriteRegistry";
 
 // All 9 selectable characters from the Kenney atlas (gun pose — facing right with weapon)
 export const CHARACTER_DEFS: { frame: string; name: string }[] = [
@@ -113,6 +115,22 @@ export class BootScene extends Phaser.Scene {
     );
     // Load tilesheet as a plain image (we'll extract tiles in create())
     this.load.image("kenney_tilesheet", "assets/tilesheet_complete.png");
+
+    // Load generated sprite atlases (optional — gracefully skip if missing)
+    for (const [category, key] of Object.entries(ATLAS_KEYS)) {
+      const paths = ATLAS_PATHS[category as keyof typeof ATLAS_PATHS];
+      if (paths) {
+        this.load.atlas(key, paths.image, paths.json);
+      }
+    }
+
+    // Suppress load errors for missing generated atlases (they're optional)
+    this.load.on("loaderror", (file: Phaser.Loader.File) => {
+      const atlasValues = Object.values(ATLAS_KEYS) as string[];
+      if (atlasValues.includes(file.key)) {
+        console.log(`BootScene: optional atlas "${file.key}" not found, using procedural fallback`);
+      }
+    });
   }
 
   create() {
@@ -139,6 +157,15 @@ export class BootScene extends Phaser.Scene {
     this.generateShadowTexture();
     this.generateMiscTextures();
     this.registerAnimations();
+
+    // Initialize SpriteRegistry and pre-register directional animations
+    const registry = new SpriteRegistry(this);
+    if (registry.hasGeneratedCharacters) {
+      for (let i = 0; i < CHARACTER_DEFS.length; i++) {
+        registry.registerAllCharacterAnims(i);
+      }
+      console.log("BootScene: generated character atlases detected, directional anims registered");
+    }
 
     // Apply nearest-neighbor to all generated sprite textures so pixel art stays crisp
     this.textures.each((tex) => {

@@ -441,3 +441,26 @@
 ### Infrastructure Changes
 - `scripts/ec2-setup.sh` — added nginx server blocks for `test-zach.zachvanoast.com` (→ 3002) and `test-keith.zachvanoast.com` (→ 3003), plus certbot SSL for both
 - DNS: Route 53 A records needed for `test-zach` and `test-keith` subdomains (one-time manual step)
+
+## Extensible Sprite System — COMPLETE
+
+### Architecture
+- `client/src/sprites/SpriteManifest.ts` — Type definitions, frame naming conventions, directional animation definitions for all sprite categories (characters, items, vehicles, environment)
+- `client/src/sprites/SpriteRegistry.ts` — Runtime texture/frame lookup with procedural fallback; detects loaded generated atlases, routes to atlas frames when available, falls back to existing procedural textures
+- `client/src/sprites/DirectionalAnimator.ts` — Converts aim angle to 4-direction animation; when generated atlases loaded, sprites stay upright with directional art; falls back to legacy rotation-based rendering
+
+### Integration Points
+- **BootScene** — Loads optional generated atlases from `assets/generated/atlases/` with silent error suppression; initializes SpriteRegistry and pre-registers directional anims for all characters
+- **GameScene** — Uses SpriteRegistry for player sprite creation (local + remote), pickup textures, projectile textures, vehicle textures; DirectionalAnimator for local and remote player animation; fallback to legacy behavior when generated atlases missing
+- **MenuScene** — Uses SpriteRegistry for character preview frames in picker and lobby panel
+- **LobbyScene** — Uses SpriteRegistry for player list preview icons
+
+### Frame Naming Conventions
+- Characters: `char_{index}_{state}_{dir}_{frame}` (states: idle, walk, attack_melee, attack_ranged, death, dash)
+- Pickups: `pickup_{weaponId}` / `pickup_{consumableId}`
+- Projectiles: `proj_{weaponId}`
+- Vehicles: `vehicle_{vehicleId}_{dir}`
+
+### Build Scripts
+- `client/package.json` — `process-sprites` and `pack-atlas` scripts added
+- `@napi-rs/canvas` added as devDependency for server-side sprite processing
