@@ -89,6 +89,14 @@ export class NetworkManager {
     return this.artificialDelayMs;
   }
 
+  /** Accept an already-connected room (e.g. from LobbyScene) */
+  setRoom(room: Room) {
+    this.room = room;
+    if (this._onStateChange) {
+      this.room.onStateChange(this._onStateChange);
+    }
+  }
+
   onStateChange(callback: (state: any) => void) {
     this._onStateChange = callback;
     if (this.room) {

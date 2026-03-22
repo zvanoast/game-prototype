@@ -34,6 +34,7 @@ export class PlayerSchema extends Schema {
   @type("float32") damageMultiplier: number = 1.0;
   @type("uint8") characterIndex: number = 0;
   @type("uint8") mountedVehicleSchemaId: number = 0; // 0 = on foot
+  @type("boolean") isBot: boolean = false;
 }
 
 export class VehicleSchema extends Schema {
@@ -71,9 +72,10 @@ export class GameStateSchema extends Schema {
   @type([ LockerSchema ]) lockers = new ArraySchema<LockerSchema>();
   @type([ PickupSchema ]) pickups = new ArraySchema<PickupSchema>();
   @type([ VehicleSchema ]) vehicles = new ArraySchema<VehicleSchema>();
-  @type("string") phase: string = "waiting"; // waiting | countdown | playing | ended
+  @type("string") phase: string = "lobby"; // lobby | waiting | countdown | playing | ended
   @type("uint32") tick: number = 0;
   @type("uint8") alivePlayers: number = 0;
   @type("uint8") countdownSeconds: number = 0;
   @type("string") winnerId: string = "";
+  @type("string") hostSessionId: string = "";
 }

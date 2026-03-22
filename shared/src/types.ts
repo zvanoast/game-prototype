@@ -116,7 +116,7 @@ export interface ConsumableConfig {
 
 // --- Match ---
 
-export type MatchPhase = "waiting" | "countdown" | "playing" | "ended" | "sandbox";
+export type MatchPhase = "lobby" | "waiting" | "countdown" | "playing" | "ended" | "sandbox";
 
 // --- Weapon Config ---
 

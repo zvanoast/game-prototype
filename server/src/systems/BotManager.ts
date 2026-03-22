@@ -25,6 +25,7 @@ export class BotManager {
   private findSafeSpawn: () => { x: number; y: number };
   private botIds: string[] = [];
   private brains = new Map<string, BotBrain>();
+  private nextBotIndex = 0; // monotonically increasing to avoid ID reuse
 
   constructor(
     state: GameStateSchema,
@@ -75,10 +76,11 @@ export class BotManager {
 
     for (let i = 0; i < personas.length; i++) {
       const persona = personas[i];
-      const botId = `${BOT_SESSION_PREFIX}${i}`;
+      const botId = `${BOT_SESSION_PREFIX}${this.nextBotIndex++}`;
       const player = new PlayerSchema();
 
       player.displayName = persona.name;
+      player.isBot = true;
 
       // Use persona's preferred character, fall back if taken
       let charIdx = persona.characterIndex;
@@ -118,10 +120,82 @@ export class BotManager {
   }
 
   /**
+   * Spawn a single bot with the given persona.
+   * Returns the bot's sessionId, or null if spawning failed.
+   */
+  spawnSingleBot(
+    personaId: string,
+    combatSystem: CombatSystem,
+    lootSystem: LootSystem,
+    buffSystem: BuffSystem,
+    matchSystem: MatchSystem,
+  ): string | null {
+    const persona = PERSONA_MAP[personaId];
+    if (!persona) return null;
+
+    const botId = `${BOT_SESSION_PREFIX}${this.nextBotIndex++}`;
+    const player = new PlayerSchema();
+
+    player.displayName = persona.name;
+    player.isBot = true;
+
+    // Use persona's preferred character, fall back if taken
+    let charIdx = persona.characterIndex;
+    if (this.takenCharacters.has(charIdx)) {
+      charIdx = 0;
+      for (let c = 0; c < CHARACTER_COUNT; c++) {
+        if (!this.takenCharacters.has(c)) {
+          charIdx = c;
+          break;
+        }
+      }
+    }
+    player.characterIndex = charIdx;
+    this.takenCharacters.add(charIdx);
+
+    const pos = this.findSafeSpawn();
+    player.x = pos.x;
+    player.y = pos.y;
+    player.health = MAX_HEALTH;
+    player.state = "idle";
+
+    this.state.players.set(botId, player);
+    combatSystem.registerPlayer(botId);
+    lootSystem.registerPlayer(botId);
+    buffSystem.registerPlayer(botId);
+    matchSystem.onPlayerJoin(botId);
+
+    const brain = new BotBrain(botId, persona, this.state);
+    this.brains.set(botId, brain);
+    this.botIds.push(botId);
+
+    console.log(`Spawned bot: ${persona.name} (${botId})`);
+    return botId;
+  }
+
+  /**
+   * Remove a bot by sessionId. Returns true if found and removed.
+   * Caller must also remove from state.players and unregister from systems.
+   */
+  removeBot(botSessionId: string): boolean {
+    if (!this.brains.has(botSessionId)) return false;
+
+    // Release character
+    const player = this.state.players.get(botSessionId);
+    if (player) {
+      this.takenCharacters.delete(player.characterIndex);
+    }
+
+    this.brains.delete(botSessionId);
+    this.botIds = this.botIds.filter(id => id !== botSessionId);
+    return true;
+  }
+
+  /**
    * Tick all bot brains and push their inputs into the game's input queue.
    */
   tickBots(tick: number, inputQueue: QueuedInput[], phase: string): void {
-    if (phase === "waiting" || phase === "countdown" || phase === "ended") return;
+    if (phase === "lobby" || phase === "waiting" || phase === "countdown" || phase === "ended") return;
 
     for (const [botId, brain] of this.brains) {
       const input = brain.tick(tick);

@@ -114,6 +114,7 @@ export class GameScene extends Phaser.Scene {
 
   // Match state
   private matchPhase: string = "waiting";
+  private isHost = false;
   private localEliminated = false;
   private matchWinner: boolean | null = null; // true=won, false=lost, null=draw/unknown
   private matchWinnerName = "";
@@ -186,6 +187,16 @@ export class GameScene extends Phaser.Scene {
   // Server projectile count for debug
   private serverProjectileCount = 0;
 
+  // Pause/options menu
+  private pauseMenuContainer: Phaser.GameObjects.Container | null = null;
+  private pauseMenuOpen = false;
+
+  // Generation counter — incremented each init; stale handlers compare against this
+  private generation = 0;
+
+  // Schema listener unsubscribe functions (cleaned up between rounds)
+  private schemaUnsubs: (() => void)[] = [];
+
   constructor() {
     super({ key: "GameScene" });
   }
@@ -193,15 +204,28 @@ export class GameScene extends Phaser.Scene {
   // Test mode (offline, skips server connection)
   private testMode = false;
   private botPersonas: string[] = [];
+  // Pre-connected room from LobbyScene
+  private existingRoom: any = null;
+  // When true, shutdown won't disconnect (room is being handed to another scene)
+  private preserveRoom = false;
 
-  init(data: { nickname?: string; testMode?: boolean; characterIndex?: number; botPersonas?: string[] } = {}) {
+  init(data: { nickname?: string; testMode?: boolean; characterIndex?: number; botPersonas?: string[]; existingRoom?: any } = {}) {
     this.nickname = data.nickname ?? "";
     this.testMode = data.testMode ?? false;
     this.characterIndex = data.characterIndex ?? 0;
     this.botPersonas = data.botPersonas ?? [];
+    this.existingRoom = data.existingRoom ?? null;
+    this.preserveRoom = false;
+    this.pauseMenuOpen = false;
+    this.pauseMenuContainer = null;
+    this.generation++;
   }
 
   create() {
+    // Unsubscribe stale Colyseus schema listeners from previous round
+    for (const unsub of this.schemaUnsubs) unsub();
+    this.schemaUnsubs = [];
+
     // Reset all mutable state for clean re-entry (scene instance is reused)
     this.localPlayer = null;
     this.localSessionId = null;
@@ -217,6 +241,7 @@ export class GameScene extends Phaser.Scene {
     this.localConsumableSlot1 = "";
     this.localConsumableSlot2 = "";
     this.matchPhase = "waiting";
+    this.isHost = false;
     this.localEliminated = false;
     this.matchWinner = null;
     this.matchWinnerName = "";
@@ -230,18 +255,26 @@ export class GameScene extends Phaser.Scene {
     this.prevAttackHeld = false;
     this.serverProjectileCount = 0;
     this.playerNames.clear();
+    this.remotePlayers.forEach(s => s.destroy());
     this.remotePlayers.clear();
     this.remoteTargets.clear();
+    this.remoteHealthBars.forEach(b => b.destroy());
     this.remoteHealthBars.clear();
     this.remoteCharIndices.clear();
-    this.serverProjectileSprites.clear();
+    this.serverProjectileTrailCleanups.forEach(fn => fn());
     this.serverProjectileTrailCleanups.clear();
+    this.serverProjectileSprites.forEach(s => s.destroy());
+    this.serverProjectileSprites.clear();
+    this.lockerSprites.forEach(s => s.destroy());
     this.lockerSprites.clear();
+    this.pickupSprites.forEach(c => c.destroy());
     this.pickupSprites.clear();
     this.respawnOverlay?.clear();
     this.pickupWeaponIds.clear();
     this.pickupAmmo.clear();
+    this.vehicleContainers.forEach(c => c.destroy());
     this.vehicleContainers.clear();
+    this.vehicleDurabilityBars.forEach(b => b.destroy());
     this.vehicleDurabilityBars.clear();
     this.vehicleTargets.clear();
     this.localMountedVehicleId = 0;
@@ -394,10 +427,14 @@ export class GameScene extends Phaser.Scene {
       this.scene.start("MenuScene");
     });
 
-    // ESC key returns to menu (works in both test mode and multiplayer)
+    // ESC key toggles pause menu (test mode: direct exit)
     this.input.keyboard!.on("keydown-ESC", () => {
-      this.network.disconnect();
-      this.scene.start("MenuScene");
+      if (this.testMode) {
+        this.network.disconnect();
+        this.scene.start("MenuScene");
+        return;
+      }
+      this.togglePauseMenu();
     });
 
     // Test mode label
@@ -416,7 +453,18 @@ export class GameScene extends Phaser.Scene {
 
     // Clean up network on scene shutdown (scene.start to another scene)
     this.events.on("shutdown", () => {
-      this.network.disconnect();
+      if (!this.preserveRoom) {
+        this.network.disconnect();
+      }
+    });
+
+    // Tab scoreboard toggle (hold to show)
+    this.input.keyboard!.on("keydown-TAB", (event: KeyboardEvent) => {
+      event.preventDefault(); // Prevent browser tab-switching
+      this.matchHud.setTabHeld(true);
+    });
+    this.input.keyboard!.on("keyup-TAB", () => {
+      this.matchHud.setTabHeld(false);
     });
 
     // Artificial latency keys (1-5)
@@ -487,30 +535,138 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private async connectToServer() {
-    const roomType = this.testMode ? "sandbox" : "game";
-    const options: Record<string, unknown> = {
-      nickname: this.nickname,
-      characterIndex: this.characterIndex,
-    };
-    if (this.testMode) {
-      options.sandbox = true;
-      if (this.botPersonas.length > 0) {
-        options.botPersonas = this.botPersonas;
-      }
+  // ─── Pause Menu ───────────────────────────────────────────────────────
+
+  private togglePauseMenu() {
+    if (this.pauseMenuOpen) {
+      this.closePauseMenu();
+    } else {
+      this.openPauseMenu();
+    }
+  }
+
+  private openPauseMenu() {
+    if (this.pauseMenuOpen) return;
+    this.pauseMenuOpen = true;
+
+    const centerX = this.cameras.main.width / 2;
+    const centerY = this.cameras.main.height / 2;
+
+    // Use an array to track objects for cleanup (no container — scrollFactor
+    // on a container doesn't affect children's interactive hit areas)
+    const items: Phaser.GameObjects.GameObject[] = [];
+
+    // Dimmed background (full screen, blocks clicks behind menu)
+    const dimBg = this.add.rectangle(centerX, centerY, 800, 600, 0x000000, 0.6);
+    dimBg.setScrollFactor(0).setDepth(1000).setInteractive();
+    items.push(dimBg);
+
+    // Panel
+    const panel = this.add.rectangle(centerX, centerY, 280, 200, 0x1a1a2e, 0.95);
+    panel.setStrokeStyle(2, 0x555577);
+    panel.setScrollFactor(0).setDepth(1001);
+    items.push(panel);
+
+    // Title
+    const title = this.add.text(centerX, centerY - 70, "PAUSED", {
+      fontSize: "22px",
+      fontFamily: "monospace",
+      color: "#ffcc00",
+      fontStyle: "bold",
+    }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(1002);
+    items.push(title);
+
+    // Resume button
+    items.push(this.makeMenuButton(centerX, centerY - 20, "Resume", "#cccccc", () => {
+      this.closePauseMenu();
+    }));
+
+    // Host: End Game
+    if (this.isHost) {
+      items.push(this.makeMenuButton(centerX, centerY + 20, "End Game", "#ff8844", () => {
+        this.network.getRoom()?.send("end_game", {});
+        this.closePauseMenu();
+      }));
     }
 
+    // Leave Game
+    items.push(this.makeMenuButton(centerX, centerY + 60, "Leave Game", "#ff4444", () => {
+      this.closePauseMenu();
+      this.network.disconnect();
+      this.scene.start("MenuScene");
+    }));
+
+    // Wrap in container for easy cleanup only (not for positioning)
+    this.pauseMenuContainer = this.add.container(0, 0, items);
+    this.pauseMenuContainer.setDepth(1000);
+  }
+
+  private makeMenuButton(x: number, y: number, label: string, color: string, onClick: () => void): Phaser.GameObjects.Text {
+    const btn = this.add.text(x, y, label, {
+      fontSize: "16px",
+      fontFamily: "monospace",
+      color,
+      padding: { x: 16, y: 6 },
+    });
+    btn.setOrigin(0.5, 0.5);
+    btn.setScrollFactor(0);
+    btn.setDepth(1002);
+    btn.setInteractive({ useHandCursor: true });
+    btn.on("pointerover", () => btn.setAlpha(0.7));
+    btn.on("pointerout", () => btn.setAlpha(1));
+    btn.on("pointerup", onClick);
+    return btn;
+  }
+
+  private closePauseMenu() {
+    if (!this.pauseMenuOpen) return;
+    this.pauseMenuOpen = false;
+    if (this.pauseMenuContainer) {
+      this.pauseMenuContainer.destroy(true);
+      this.pauseMenuContainer = null;
+    }
+  }
+
+  private async connectToServer() {
     try {
-      const room = await this.network.connect(options, roomType);
-      this.localSessionId = room.sessionId;
+      let room: any;
+
+      if (this.existingRoom) {
+        // Reuse room from LobbyScene — already connected
+        room = this.existingRoom;
+        this.network.setRoom(room);
+        this.existingRoom = null;
+        this.localSessionId = room.sessionId;
+      } else {
+        const roomType = this.testMode ? "sandbox" : "game";
+        const options: Record<string, unknown> = {
+          nickname: this.nickname,
+          characterIndex: this.characterIndex,
+        };
+        if (this.testMode) {
+          options.sandbox = true;
+          if (this.botPersonas.length > 0) {
+            options.botPersonas = this.botPersonas;
+          }
+        }
+
+        room = await this.network.connect(options, roomType);
+        this.localSessionId = room.sessionId;
+      }
+
+      // Capture generation so stale handlers from previous scene entries bail
+      const gen = this.generation;
+      const alive = () => this.generation === gen;
 
       // Track phase changes from state
       const trackState = () => {
         const state = room.state as any;
+        const prevPhase = this.matchPhase;
         this.matchPhase = state.phase ?? "waiting";
         this.matchAlivePlayers = state.alivePlayers ?? 0;
         this.matchCountdownSeconds = state.countdownSeconds ?? 0;
         this.matchTotalPlayers = state.players?.size ?? 0;
+        this.isHost = (state.hostSessionId === this.localSessionId);
 
         // Determine win state
         if (this.matchPhase === "ended") {
@@ -523,18 +679,38 @@ export class GameScene extends Phaser.Scene {
             this.matchWinner = false;
           }
         }
+
+        // Close pause menu on phase changes
+        if (this.matchPhase !== prevPhase) {
+          this.closePauseMenu();
+        }
+
+        // Match reset → back to lobby (non-sandbox only)
+        if (this.matchPhase === "lobby" && prevPhase !== "lobby" && !this.testMode) {
+          this.preserveRoom = true;
+          this.scene.start("LobbyScene", {
+            nickname: this.nickname,
+            characterIndex: this.characterIndex,
+            existingRoom: room,
+          });
+        }
       };
 
-      room.state.onChange(() => {
+      this.schemaUnsubs.push(room.state.onChange(() => {
+        if (!alive()) return;
         trackState();
-      });
+      }));
 
-      room.state.players.onAdd((player: any, sessionId: string) => {
+      // --- Player setup helper (used by onAdd and manual init for reused rooms) ---
+      const handlePlayerAdd = (player: any, sessionId: string) => {
         // Use server displayName
         const name = player.displayName || sessionId.substring(0, 6);
         this.playerNames.set(sessionId, name);
 
         if (sessionId === room.sessionId) {
+          // Skip if already spawned (onAdd + manual init may both fire)
+          if (this.localPlayer) return;
+
           // If server reassigned character (requested was taken), rebuild player sheet
           const serverCharIdx = player.characterIndex ?? 0;
           if (serverCharIdx !== this.characterIndex) {
@@ -572,6 +748,9 @@ export class GameScene extends Phaser.Scene {
           }
           console.log("Local player spawned", this.localEliminated ? "(eliminated, spectating)" : "");
         } else {
+          // Skip if already tracked
+          if (this.remotePlayers.has(sessionId)) return;
+
           // Use server-assigned character's spritesheet for remote player
           const charIdx = player.characterIndex ?? 0;
           const sheetKey = `player_sheet_${charIdx}`;
@@ -602,7 +781,7 @@ export class GameScene extends Phaser.Scene {
         }
 
         player.onChange(() => {
-          // Track displayName updates
+          if (!alive()) return;
           if (player.displayName) {
             this.playerNames.set(sessionId, player.displayName);
           }
@@ -657,9 +836,24 @@ export class GameScene extends Phaser.Scene {
             });
           }
         });
+      };
+
+      // Register onAdd for future players
+      this.schemaUnsubs.push(room.state.players.onAdd((player: any, sessionId: string) => {
+        if (!alive()) return;
+        handlePlayerAdd(player, sessionId);
+      }));
+
+      // Sync current state immediately (onChange only fires on future changes)
+      trackState();
+
+      // Handle pre-existing players on reused rooms (onAdd may not fire for them)
+      room.state.players.forEach((player: any, sessionId: string) => {
+        handlePlayerAdd(player, sessionId);
       });
 
-      room.state.players.onRemove((_player: any, sessionId: string) => {
+      this.schemaUnsubs.push(room.state.players.onRemove((_player: any, sessionId: string) => {
+        if (!alive()) return;
         const sprite = this.remotePlayers.get(sessionId);
         if (sprite) {
           sprite.destroy();
@@ -680,10 +874,10 @@ export class GameScene extends Phaser.Scene {
         }
 
         console.log(`Remote player left: ${sessionId}`);
-      });
+      }));
 
       // --- Lockers ---
-      room.state.lockers.onAdd((locker: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.lockers.onAdd((locker: any, _key: number) => {
         const texture = locker.opened ? "locker_open" : "locker_closed";
         const sprite = this.add.sprite(locker.x, locker.y, texture);
         sprite.setOrigin(0.5, 0.5);
@@ -696,10 +890,10 @@ export class GameScene extends Phaser.Scene {
             s.setTexture(locker.opened ? "locker_open" : "locker_closed");
           }
         });
-      });
+      }));
 
       // --- Pickups (click-to-pickup with hover tooltip) ---
-      room.state.pickups.onAdd((pickup: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.pickups.onAdd((pickup: any, _key: number) => {
         const isConsumable = !!pickup.consumableId;
         const weapon = isConsumable ? null : getWeaponConfig(pickup.weaponId);
         const consumable = isConsumable ? getConsumableConfig(pickup.consumableId) : null;
@@ -765,9 +959,9 @@ export class GameScene extends Phaser.Scene {
             c.setPosition(pickup.x, pickup.y);
           }
         });
-      });
+      }));
 
-      room.state.pickups.onRemove((pickup: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.pickups.onRemove((pickup: any, _key: number) => {
         const container = this.pickupSprites.get(pickup.id);
         if (container) {
           container.destroy();
@@ -779,10 +973,10 @@ export class GameScene extends Phaser.Scene {
           this.hoveredPickupId = null;
           this.pickupTooltip.setVisible(false);
         }
-      });
+      }));
 
       // --- Vehicles ---
-      room.state.vehicles.onAdd((vehicle: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.vehicles.onAdd((vehicle: any, _key: number) => {
         const config = getVehicleConfig(vehicle.vehicleId);
         const texKey = this.textures.exists(`vehicle_${vehicle.vehicleId}`)
           ? `vehicle_${vehicle.vehicleId}`
@@ -824,9 +1018,9 @@ export class GameScene extends Phaser.Scene {
             durabilityPct: vehicle.durabilityPct,
           });
         });
-      });
+      }));
 
-      room.state.vehicles.onRemove((vehicle: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.vehicles.onRemove((vehicle: any, _key: number) => {
         const container = this.vehicleContainers.get(vehicle.id);
         if (container) {
           container.destroy();
@@ -838,10 +1032,10 @@ export class GameScene extends Phaser.Scene {
           this.vehicleDurabilityBars.delete(vehicle.id);
         }
         this.vehicleTargets.delete(vehicle.id);
-      });
+      }));
 
       // Listen for server projectile state changes
-      room.state.projectiles.onAdd((proj: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.projectiles.onAdd((proj: any, _key: number) => {
         const texKey = this.getProjectileTexture(proj.weaponId ?? "");
         const sprite = this.add.sprite(proj.x, proj.y, texKey);
         sprite.setDepth(8);
@@ -870,9 +1064,9 @@ export class GameScene extends Phaser.Scene {
             s.setPosition(proj.x, proj.y);
           }
         });
-      });
+      }));
 
-      room.state.projectiles.onRemove((proj: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.projectiles.onRemove((proj: any, _key: number) => {
         // Clean up tweens
         const tweens = this.serverProjectileTweens.get(proj.id);
         if (tweens) {
@@ -894,10 +1088,10 @@ export class GameScene extends Phaser.Scene {
           sprite.destroy();
           this.serverProjectileSprites.delete(proj.id);
         }
-      });
+      }));
 
-      // Combat messages
       room.onMessage("hit", (data: any) => {
+        if (!alive()) return;
         // Show damage number at hit location
         this.events.emit("damage:number", data.x, data.y, data.damage);
 
@@ -912,11 +1106,12 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("melee_hit", (data: any) => {
-        // Show melee impact particles at attacker position
+        if (!alive()) return;
         this.particles.impact(data.x, data.y, 0xffffff);
       });
 
       room.onMessage("kill", (data: any) => {
+        if (!alive()) return;
         // Death explosion at victim location
         this.particles.deathExplosion(data.x, data.y);
         this.events.emit("sfx:death");
@@ -929,13 +1124,14 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("player_eliminated", (data: any) => {
-        // If the spectated player was eliminated, cycle
+        if (!alive()) return;
         if (this.spectating && this.spectateTargetId === data.sessionId) {
           this.cycleSpectateTarget(1);
         }
       });
 
       room.onMessage("match_start", () => {
+        if (!alive()) return;
         this.matchPhase = "playing";
         this.matchWinner = null;
         this.matchWinnerName = "";
@@ -945,6 +1141,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("match_end", (data: any) => {
+        if (!alive()) return;
         this.matchPhase = "ended";
         this.matchWinnerName = data.winnerName ?? "";
         if (!data.winnerId) {
@@ -957,6 +1154,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("match_countdown", (data: any) => {
+        if (!alive()) return;
         this.matchCountdownSeconds = data.seconds ?? 0;
         if (data.seconds > 0) {
           this.events.emit("sfx:countdown_beep");
@@ -964,6 +1162,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("respawn", (data: any) => {
+        if (!alive()) return;
         if (data.sessionId === room.sessionId && this.localPlayer) {
           // Reset local player
           this.localPlayer.setPosition(data.x, data.y);
@@ -981,16 +1180,18 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("projectile_wall", (data: any) => {
+        if (!alive()) return;
         this.particles.impact(data.x, data.y, 0xffff00);
       });
 
       room.onMessage("locker_opened", (data: any) => {
-        // Particle burst at locker location
+        if (!alive()) return;
         this.particles.impact(data.x, data.y, 0x8B6914);
         this.events.emit("sfx:locker_open");
       });
 
       room.onMessage("respawn_start", (data: any) => {
+        if (!alive()) return;
         if (data.type === "pickup") {
           this.respawnOverlay.addTimer(
             `pickup_${data.x}_${data.y}`,
@@ -1001,6 +1202,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("weapon_pickup", (data: any) => {
+        if (!alive()) return;
         if (data.sessionId === room.sessionId) {
           // Particle burst on local player
           if (this.localPlayer) {
@@ -1011,6 +1213,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("consumable_pickup", (data: any) => {
+        if (!alive()) return;
         if (data.sessionId === room.sessionId) {
           if (this.localPlayer) {
             this.particles.impact(this.localPlayer.x, this.localPlayer.y, 0x44ff44);
@@ -1020,6 +1223,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("consumable_used", (data: any) => {
+        if (!alive()) return;
         const config = getConsumableConfig(data.consumableId);
         const color = config?.color ?? 0xffffff;
 
@@ -1038,7 +1242,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("buff_expired", (data: any) => {
-        // Particle puff when buff expires
+        if (!alive()) return;
         if (data.sessionId === room.sessionId) {
           if (this.localPlayer) {
             this.particles.impact(this.localPlayer.x, this.localPlayer.y, 0x888888);
@@ -1049,6 +1253,7 @@ export class GameScene extends Phaser.Scene {
 
       // Vehicle messages
       room.onMessage("vehicle_mount", (data: any) => {
+        if (!alive()) return;
         if (data.sessionId === room.sessionId) {
           this.localMountedVehicleId = data.vehicleSchemaId;
           this.stateMachine.setMounted(true);
@@ -1057,6 +1262,7 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("vehicle_dismount", (data: any) => {
+        if (!alive()) return;
         if (data.sessionId === room.sessionId) {
           this.localMountedVehicleId = 0;
           this.stateMachine.setMounted(false);
@@ -1065,11 +1271,12 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("vehicle_destroyed", (_data: any) => {
+        if (!alive()) return;
         this.events.emit("sfx:vehicle_destroyed");
       });
 
       room.onMessage("vehicle_hit", (data: any) => {
-        // Find target position for damage number
+        if (!alive()) return;
         let tx = 0, ty = 0;
         if (data.targetId === room.sessionId && this.localPlayer) {
           tx = this.localPlayer.x;
@@ -1087,15 +1294,17 @@ export class GameScene extends Phaser.Scene {
       });
 
       room.onMessage("weapon_depleted", (_data: any) => {
-        // Ranged weapon ammo depleted — UI will update via state sync
+        if (!alive()) return;
       });
 
       room.onMessage("dash_cooldown", (data: any) => {
+        if (!alive()) return;
         this.dashCooldownDuration = data.durationMs;
         this.dashCooldownTimer = data.durationMs;
       });
 
       room.onLeave((code: number) => {
+        if (!alive()) return;
         console.log(`Disconnected from room (code: ${code})`);
       });
     } catch (err) {
@@ -1170,7 +1379,7 @@ export class GameScene extends Phaser.Scene {
     // Don't send input or process movement if dead or eliminated
     const isDead = this.localHealth <= 0 || this.localEliminated;
     // Movement frozen during waiting and ended phases (aim + combat still allowed)
-    const movementFrozen = this.matchPhase === "waiting" || this.matchPhase === "countdown" || this.matchPhase === "ended";
+    const movementFrozen = this.pauseMenuOpen || this.matchPhase === "lobby" || this.matchPhase === "waiting" || this.matchPhase === "countdown" || this.matchPhase === "ended";
 
     // Spectator mode: cycle with left/right arrow keys
     if (this.spectating) {
@@ -1192,7 +1401,7 @@ export class GameScene extends Phaser.Scene {
         dx: canMove ? dx : 0,
         dy: canMove ? dy : 0,
         aimAngle,
-        buttons: isDead ? 0 : buttons,
+        buttons: (isDead || this.pauseMenuOpen) ? 0 : buttons,
         dt,
       };
       this.network.sendInput(input);
@@ -1485,7 +1694,7 @@ export class GameScene extends Phaser.Scene {
       this.matchCountdownSeconds,
       delta,
       this.matchWinnerName,
-      this.matchPhase === "ended" ? this.getScoreboardEntries() : undefined,
+      this.getScoreboardEntries(),
       this.localSessionId ?? undefined
     );
 

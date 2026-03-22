@@ -358,6 +358,8 @@ export class MenuScene extends Phaser.Scene {
     const count = this.lobbyPlayers.length;
     if (this.lobbyPhase === "playing" || this.lobbyPhase === "ended") {
       this.lobbyCountText.setText("Match in progress");
+    } else if (this.lobbyPhase === "lobby" || this.lobbyPhase === "countdown") {
+      this.lobbyCountText.setText(`${count} player${count > 1 ? "s" : ""} in lobby`);
     } else if (count === 0) {
       this.lobbyCountText.setText("No players yet");
     } else {
@@ -399,7 +401,7 @@ export class MenuScene extends Phaser.Scene {
     this.nicknameInput.destroy();
     this.nicknameInput = null;
 
-    this.scene.start("GameScene", { nickname, characterIndex: this.selectedCharIndex });
+    this.scene.start("LobbyScene", { nickname, characterIndex: this.selectedCharIndex });
   }
 
   private onTestMode() {

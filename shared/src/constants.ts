@@ -96,6 +96,11 @@ export const DISMOUNT_PLAYER_SPEED_FACTOR = 0.9;  // player gets 90% of vehicle 
 export const DISMOUNT_PLAYER_SPEED_CAP = 480;    // cap so Jet Ski doesn't launch you into orbit
 export const DISMOUNT_PLAYER_FRICTION = 200;     // low friction while sliding from dismount (vs normal 750)
 
+// --- Lobby ---
+export const MAX_CHAT_MESSAGE_LENGTH = 200;
+export const MAX_CHAT_HISTORY = 50;
+export const LOBBY_MAX_BOTS = 7;
+
 // --- Network ---
 // Server reads PORT env var (for test environments on different ports); client ignores this.
 export const SERVER_PORT = typeof process !== "undefined" && process.env.PORT
