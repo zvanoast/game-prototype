@@ -194,6 +194,9 @@ export class GameScene extends Phaser.Scene {
   // Generation counter — incremented each init; stale handlers compare against this
   private generation = 0;
 
+  // Schema listener unsubscribe functions (cleaned up between rounds)
+  private schemaUnsubs: (() => void)[] = [];
+
   constructor() {
     super({ key: "GameScene" });
   }
@@ -219,6 +222,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   create() {
+    // Unsubscribe stale Colyseus schema listeners from previous round
+    for (const unsub of this.schemaUnsubs) unsub();
+    this.schemaUnsubs = [];
+
     // Reset all mutable state for clean re-entry (scene instance is reused)
     this.localPlayer = null;
     this.localSessionId = null;
@@ -248,18 +255,26 @@ export class GameScene extends Phaser.Scene {
     this.prevAttackHeld = false;
     this.serverProjectileCount = 0;
     this.playerNames.clear();
+    this.remotePlayers.forEach(s => s.destroy());
     this.remotePlayers.clear();
     this.remoteTargets.clear();
+    this.remoteHealthBars.forEach(b => b.destroy());
     this.remoteHealthBars.clear();
     this.remoteCharIndices.clear();
-    this.serverProjectileSprites.clear();
+    this.serverProjectileTrailCleanups.forEach(fn => fn());
     this.serverProjectileTrailCleanups.clear();
+    this.serverProjectileSprites.forEach(s => s.destroy());
+    this.serverProjectileSprites.clear();
+    this.lockerSprites.forEach(s => s.destroy());
     this.lockerSprites.clear();
+    this.pickupSprites.forEach(c => c.destroy());
     this.pickupSprites.clear();
     this.respawnOverlay?.clear();
     this.pickupWeaponIds.clear();
     this.pickupAmmo.clear();
+    this.vehicleContainers.forEach(c => c.destroy());
     this.vehicleContainers.clear();
+    this.vehicleDurabilityBars.forEach(b => b.destroy());
     this.vehicleDurabilityBars.clear();
     this.vehicleTargets.clear();
     this.localMountedVehicleId = 0;
@@ -681,10 +696,10 @@ export class GameScene extends Phaser.Scene {
         }
       };
 
-      room.state.onChange(() => {
+      this.schemaUnsubs.push(room.state.onChange(() => {
         if (!alive()) return;
         trackState();
-      });
+      }));
 
       // --- Player setup helper (used by onAdd and manual init for reused rooms) ---
       const handlePlayerAdd = (player: any, sessionId: string) => {
@@ -824,10 +839,10 @@ export class GameScene extends Phaser.Scene {
       };
 
       // Register onAdd for future players
-      room.state.players.onAdd((player: any, sessionId: string) => {
+      this.schemaUnsubs.push(room.state.players.onAdd((player: any, sessionId: string) => {
         if (!alive()) return;
         handlePlayerAdd(player, sessionId);
-      });
+      }));
 
       // Sync current state immediately (onChange only fires on future changes)
       trackState();
@@ -837,7 +852,7 @@ export class GameScene extends Phaser.Scene {
         handlePlayerAdd(player, sessionId);
       });
 
-      room.state.players.onRemove((_player: any, sessionId: string) => {
+      this.schemaUnsubs.push(room.state.players.onRemove((_player: any, sessionId: string) => {
         if (!alive()) return;
         const sprite = this.remotePlayers.get(sessionId);
         if (sprite) {
@@ -859,10 +874,10 @@ export class GameScene extends Phaser.Scene {
         }
 
         console.log(`Remote player left: ${sessionId}`);
-      });
+      }));
 
       // --- Lockers ---
-      room.state.lockers.onAdd((locker: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.lockers.onAdd((locker: any, _key: number) => {
         const texture = locker.opened ? "locker_open" : "locker_closed";
         const sprite = this.add.sprite(locker.x, locker.y, texture);
         sprite.setOrigin(0.5, 0.5);
@@ -875,10 +890,10 @@ export class GameScene extends Phaser.Scene {
             s.setTexture(locker.opened ? "locker_open" : "locker_closed");
           }
         });
-      });
+      }));
 
       // --- Pickups (click-to-pickup with hover tooltip) ---
-      room.state.pickups.onAdd((pickup: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.pickups.onAdd((pickup: any, _key: number) => {
         const isConsumable = !!pickup.consumableId;
         const weapon = isConsumable ? null : getWeaponConfig(pickup.weaponId);
         const consumable = isConsumable ? getConsumableConfig(pickup.consumableId) : null;
@@ -944,9 +959,9 @@ export class GameScene extends Phaser.Scene {
             c.setPosition(pickup.x, pickup.y);
           }
         });
-      });
+      }));
 
-      room.state.pickups.onRemove((pickup: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.pickups.onRemove((pickup: any, _key: number) => {
         const container = this.pickupSprites.get(pickup.id);
         if (container) {
           container.destroy();
@@ -958,10 +973,10 @@ export class GameScene extends Phaser.Scene {
           this.hoveredPickupId = null;
           this.pickupTooltip.setVisible(false);
         }
-      });
+      }));
 
       // --- Vehicles ---
-      room.state.vehicles.onAdd((vehicle: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.vehicles.onAdd((vehicle: any, _key: number) => {
         const config = getVehicleConfig(vehicle.vehicleId);
         const texKey = this.textures.exists(`vehicle_${vehicle.vehicleId}`)
           ? `vehicle_${vehicle.vehicleId}`
@@ -1003,9 +1018,9 @@ export class GameScene extends Phaser.Scene {
             durabilityPct: vehicle.durabilityPct,
           });
         });
-      });
+      }));
 
-      room.state.vehicles.onRemove((vehicle: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.vehicles.onRemove((vehicle: any, _key: number) => {
         const container = this.vehicleContainers.get(vehicle.id);
         if (container) {
           container.destroy();
@@ -1017,10 +1032,10 @@ export class GameScene extends Phaser.Scene {
           this.vehicleDurabilityBars.delete(vehicle.id);
         }
         this.vehicleTargets.delete(vehicle.id);
-      });
+      }));
 
       // Listen for server projectile state changes
-      room.state.projectiles.onAdd((proj: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.projectiles.onAdd((proj: any, _key: number) => {
         const texKey = this.getProjectileTexture(proj.weaponId ?? "");
         const sprite = this.add.sprite(proj.x, proj.y, texKey);
         sprite.setDepth(8);
@@ -1049,9 +1064,9 @@ export class GameScene extends Phaser.Scene {
             s.setPosition(proj.x, proj.y);
           }
         });
-      });
+      }));
 
-      room.state.projectiles.onRemove((proj: any, _key: number) => {
+      this.schemaUnsubs.push(room.state.projectiles.onRemove((proj: any, _key: number) => {
         // Clean up tweens
         const tweens = this.serverProjectileTweens.get(proj.id);
         if (tweens) {
@@ -1073,7 +1088,7 @@ export class GameScene extends Phaser.Scene {
           sprite.destroy();
           this.serverProjectileSprites.delete(proj.id);
         }
-      });
+      }));
 
       room.onMessage("hit", (data: any) => {
         if (!alive()) return;
