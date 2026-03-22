@@ -51,12 +51,19 @@ export class MenuScene extends Phaser.Scene {
     this.add.text(centerX, 60, "STORAGE WARS", {
       fontSize: "48px",
       fontFamily: "monospace",
-      color: "#ffcc00",
+      color: "#ff2222",
       fontStyle: "bold",
     }).setOrigin(0.5, 0.5);
 
+    // Keith's Test label
+    this.add.text(centerX, 118, "Keith's Test", {
+      fontSize: "14px",
+      fontFamily: "monospace",
+      color: "#ffffff",
+    }).setOrigin(0.5, 0.5);
+
     // Subtitle
-    this.add.text(centerX, 96, "No Relation", {
+    this.add.text(centerX, 96, "NO RELATION", {
       fontSize: "16px",
       fontFamily: "monospace",
       color: "#aaaaaa",
