@@ -526,6 +526,9 @@ export class GameRoom extends Room<GameStateSchema> {
     // Tick bot AI — bots push inputs into the same queue as human players
     this.botManager?.tickBots(tick, this.inputQueue, phase);
 
+    // Tick bot AI — bots push inputs into the same queue as human players
+    this.botManager?.tickBots(tick, this.inputQueue, phase);
+
     // Process all queued inputs
     for (const { sessionId, input } of this.inputQueue) {
       const player = this.state.players.get(sessionId);

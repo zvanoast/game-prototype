@@ -404,7 +404,7 @@ export class VehicleSystem {
         const damage = Math.round(sv.config.runOverDamage * speedPct);
 
         if (this.combatSystem) {
-          this.combatSystem.applyDamage(targetId, target, damage, attackerId, "vehicle");
+          this.combatSystem.applyDamage(targetId, target, damage, attackerId, "vehicle", sv.config.name);
         }
 
         this.room.broadcast("vehicle_hit", {

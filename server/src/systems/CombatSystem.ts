@@ -314,7 +314,8 @@ export class CombatSystem {
     target: PlayerSchema,
     damage: number,
     attackerId: string,
-    type: "projectile" | "melee" | "vehicle"
+    type: "projectile" | "melee" | "vehicle",
+    vehicleName?: string
   ) {
     // Route through shield first
     let actualDamage = damage;
@@ -352,9 +353,11 @@ export class CombatSystem {
       this.lootSystem.onPlayerRespawn(targetId, target.x, target.y);
 
       // Determine weapon name for kill feed
-      const weaponName = type === "melee"
-        ? (this.lootSystem.getPlayerMeleeConfig(attackerId)?.name ?? "Fists")
-        : (this.lootSystem.getPlayerRangedConfig(attackerId)?.name ?? "Ranged");
+      const weaponName = type === "vehicle"
+        ? (vehicleName ?? "Vehicle")
+        : type === "melee"
+          ? (this.lootSystem.getPlayerMeleeConfig(attackerId)?.name ?? "Fists")
+          : (this.lootSystem.getPlayerRangedConfig(attackerId)?.name ?? "Ranged");
 
       // During match play, eliminate instead of respawning
       if (this.matchSystem && this.matchSystem.getPhase() === "playing") {
@@ -371,6 +374,7 @@ export class CombatSystem {
         killerId: attackerId,
         victimId: targetId,
         weaponName,
+        type,
         x: target.x,
         y: target.y,
       });
