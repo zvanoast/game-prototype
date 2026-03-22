@@ -274,12 +274,12 @@ export class MatchHud {
     this.tickKillFeed(delta);
   }
 
-  showKillFeed(killerName: string, victimName: string, weaponName: string) {
+  showKillFeed(killerName: string, victimName: string, weaponName: string, isVehicle = false) {
     const text = this.scene.add.text(0, 0,
       `${killerName} [${weaponName}] ${victimName}`, {
       fontSize: "13px",
       fontFamily: "monospace",
-      color: "#ffffff",
+      color: isVehicle ? "#ff8800" : "#ffffff",
       backgroundColor: "#000000aa",
       padding: { x: 6, y: 3 },
     });
