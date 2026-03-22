@@ -103,6 +103,7 @@ export class GameRoom extends Room<GameStateSchema> {
     // Cross-wire systems
     this.combatSystem.setMatchSystem(this.matchSystem);
     this.combatSystem.setBuffSystem(this.buffSystem);
+    this.combatSystem.setVehicleSystem(this.vehicleSystem);
     this.matchSystem.setCombatSystem(this.combatSystem);
     this.matchSystem.setBuffSystem(this.buffSystem);
     this.matchSystem.setVehicleSystem(this.vehicleSystem);
