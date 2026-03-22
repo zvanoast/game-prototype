@@ -925,7 +925,7 @@ export class GameScene extends Phaser.Scene {
         const killerName = this.playerNames.get(data.killerId) ?? data.killerId?.substring(0, 6) ?? "???";
         const victimName = this.playerNames.get(data.victimId) ?? data.victimId?.substring(0, 6) ?? "???";
         const weaponName = data.weaponName ?? "???";
-        this.matchHud.showKillFeed(killerName, victimName, weaponName);
+        this.matchHud.showKillFeed(killerName, victimName, weaponName, data.type === "vehicle");
       });
 
       room.onMessage("player_eliminated", (data: any) => {
