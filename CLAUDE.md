@@ -82,6 +82,17 @@ storage-wars/
 
 Character selection, production deployment, test environment deployment, and bot AI complete. 9 phases of gameplay + bot AI implemented. See `claude-progress.md` for full history.
 
+## Branching Rules
+
+**Never commit directly to `main`.** All changes — features, bug fixes, tweaks — must be made on a new branch.
+
+- Check the current branch before making any changes: `git branch --show-current`
+- If on `main`, create a new branch first using a descriptive name:
+  - `feature/<name>` for new features
+  - `fix/<name>` for bug fixes
+  - `chore/<name>` for non-gameplay changes (docs, config, CI)
+- This applies to all contributors.
+
 ## Development Commands
 
 ```bash

@@ -3,6 +3,7 @@ import { GameStateSchema, PlayerSchema, ProjectileSchema } from "../state/GameSt
 import { LootSystem } from "./LootSystem";
 import { BuffSystem } from "./BuffSystem";
 import type { MatchSystem } from "./MatchSystem";
+import type { VehicleSystem } from "./VehicleSystem";
 import type { InputPayload, WallRect } from "shared";
 import {
   PLAYER_RADIUS,
@@ -44,6 +45,7 @@ export class CombatSystem {
   private lootSystem: LootSystem;
   private buffSystem: BuffSystem | null = null;
   private matchSystem: MatchSystem | null = null;
+  private vehicleSystem: VehicleSystem | null = null;
   private playerCombat = new Map<string, PlayerCombatState>();
   private projectiles: ServerProjectile[] = [];
   private nextProjectileId = 1;
@@ -69,6 +71,10 @@ export class CombatSystem {
 
   setMatchSystem(matchSystem: MatchSystem) {
     this.matchSystem = matchSystem;
+  }
+
+  setVehicleSystem(vehicleSystem: VehicleSystem) {
+    this.vehicleSystem = vehicleSystem;
   }
 
   registerPlayer(sessionId: string) {
@@ -342,6 +348,9 @@ export class CombatSystem {
     if (target.health <= 0) {
       target.health = 0;
       target.state = "dead";
+
+      // Force dismount if riding a vehicle
+      this.vehicleSystem?.onPlayerDeath(targetId);
 
       // Credit the kill
       const attacker = this.state.players.get(attackerId);

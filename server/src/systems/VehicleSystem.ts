@@ -428,6 +428,11 @@ export class VehicleSystem {
 
   /** Reset for new match */
   resetForNewMatch() {
+    // Dismount all mounted players so client state and PlayerSchema are cleared
+    for (const sessionId of Array.from(this.playerVehicle.keys())) {
+      this.dismount(sessionId);
+    }
+
     // Clear all vehicles
     while (this.state.vehicles.length > 0) {
       this.state.vehicles.pop();
